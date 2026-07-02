@@ -29,6 +29,12 @@ export interface GameStoreSnapshot {
   readonly battery: number; // 0..100 flashlight cell charge
   readonly bandages: number; // wound-binding kits carried
   readonly binding: number; // 0..1 wound-bind progress (0 = not binding)
+  readonly lockpicks: number; // lockpicks carried (for pickable strongboxes)
+  readonly picking: boolean; // lock-pick minigame active (world stays live)
+  readonly pickAngle: number; // 0..1 sweeping pointer position
+  readonly pickLo: number; // 0..1 sweet-spot lower bound
+  readonly pickHi: number; // 0..1 sweet-spot upper bound
+  readonly pickPins: number; // pins left to set
   readonly objective: string;
   readonly prompt: string; // contextual interaction prompt ("" = none)
   readonly toast: string; // transient message
@@ -64,6 +70,12 @@ const initial: GameStoreSnapshot = {
   battery: 100,
   bandages: 2,
   binding: 0,
+  lockpicks: 2,
+  picking: false,
+  pickAngle: 0,
+  pickLo: 0,
+  pickHi: 0,
+  pickPins: 0,
   objective: 'Cross the threshold.',
   prompt: '',
   toast: '',

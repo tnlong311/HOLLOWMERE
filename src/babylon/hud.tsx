@@ -181,6 +181,25 @@ export function Hud({ phaseRef }: HudProps) {
         </div>
       ) : null}
 
+      {/* Lock-pick minigame — world stays LIVE behind it (you're exposed). */}
+      {s.picking ? (
+        <div style={pickWrapStyle}>
+          <div style={{ color: AMBER, letterSpacing: 3, fontSize: '0.9rem', marginBottom: 4 }}>PICKING THE LOCK</div>
+          <div style={{ color: INK, opacity: 0.7, fontSize: '0.74rem', marginBottom: 12 }}>
+            Pins left: <b style={{ color: AMBER }}>{s.pickPins}</b> · Lockpicks: <b style={{ color: s.lockpicks > 0 ? AMBER : '#c2452f' }}>{s.lockpicks}</b>
+          </div>
+          <div style={pickTrackStyle}>
+            {/* sweet spot */}
+            <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${s.pickLo * 100}%`, width: `${(s.pickHi - s.pickLo) * 100}%`, background: 'rgba(217,164,65,0.5)', borderLeft: `2px solid ${AMBER}`, borderRight: `2px solid ${AMBER}` }} />
+            {/* sweeping pointer */}
+            <div style={{ position: 'absolute', top: -4, bottom: -4, left: `calc(${s.pickAngle * 100}% - 1px)`, width: 3, background: '#e9dcc3', boxShadow: '0 0 6px #e9dcc3' }} />
+          </div>
+          <div style={{ color: INK, opacity: 0.6, fontSize: '0.72rem', marginTop: 12 }}>
+            <b style={{ color: AMBER }}>E</b> / <b style={{ color: AMBER }}>click</b> — set pin · <b style={{ color: AMBER }}>Q</b> — cancel
+          </div>
+        </div>
+      ) : null}
+
       {/* Full categorized inventory (toggle with I / Tab — pauses play) */}
       {s.inventoryOpen ? <InventoryScreen s={s} /> : null}
 
@@ -244,6 +263,7 @@ function InventoryScreen({ s }: { s: GameStoreSnapshot }) {
       label: 'Aid & Supplies', glyph: CAT_GLYPH.aid,
       items: [
         { key: 'bandage', label: 'Bandage', note: `×${s.bandages}`, action: s.bandages > 0 ? A('use', 'bandage', 'Use') : undefined },
+        { key: 'lockpick', label: 'Lockpick', note: `×${s.lockpicks}` },
         { key: 'battery', label: 'Battery', note: `${s.battery}%` },
         { key: 'ink', label: 'Ledger Ink', note: `×${s.ink}` },
       ],
@@ -371,6 +391,8 @@ const resRowStyle: CSSProperties = { display: 'flex', gap: 10, fontSize: '0.78re
 const miniTrackStyle: CSSProperties = { flex: 1, height: 4, background: 'rgba(233,220,195,0.16)', borderRadius: 2, overflow: 'hidden' };
 const meterLabelStyle: CSSProperties = { fontSize: '0.56rem', letterSpacing: 1, opacity: 0.6, width: 24 };
 const bindWrapStyle: CSSProperties = { position: 'absolute', top: '60%', left: '50%', transform: 'translateX(-50%)', padding: '8px 16px', background: 'rgba(8,7,6,0.8)', borderRadius: 6, color: INK, fontFamily: fontStack, fontSize: '0.82rem', textAlign: 'center', pointerEvents: 'none' };
+const pickWrapStyle: CSSProperties = { position: 'absolute', top: '52%', left: '50%', transform: 'translate(-50%,-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 24px', background: 'rgba(8,7,6,0.82)', border: `1px solid ${AMBER}55`, borderRadius: 8, fontFamily: fontStack, pointerEvents: 'none', textAlign: 'center' };
+const pickTrackStyle: CSSProperties = { position: 'relative', width: 340, height: 20, background: 'rgba(233,220,195,0.12)', border: '1px solid rgba(233,220,195,0.25)', borderRadius: 4 };
 const gearStyle: CSSProperties = { position: 'absolute', bottom: 16, right: 16, width: 40, height: 40, background: 'rgba(8,7,6,0.6)', border: '1px solid rgba(233,220,195,0.3)', borderRadius: 6, color: '#e9dcc3', fontFamily: fontStack, fontSize: '1.2rem', cursor: 'pointer', pointerEvents: 'auto' };
 const invBtnStyle: CSSProperties = { position: 'absolute', bottom: 16, right: 64, height: 40, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5, background: 'rgba(8,7,6,0.6)', border: '1px solid rgba(217,164,65,0.45)', borderRadius: 6, color: '#e9dcc3', fontFamily: fontStack, fontSize: '1.05rem', cursor: 'pointer', pointerEvents: 'auto' };
 const invScreenStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'radial-gradient(circle at 50% 40%, rgba(16,12,9,0.94), rgba(2,2,3,0.98))', fontFamily: fontStack, pointerEvents: 'auto', padding: 24 };

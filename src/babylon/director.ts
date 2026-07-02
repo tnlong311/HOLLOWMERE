@@ -63,6 +63,16 @@ export function createDirector(deps: DirectorDeps): Director {
   let hasCleaver = false; // kitchen melee upgrade — dagger hits harder
   let safeOpened = false; // Founder's wall-safe (opened by the locket)
   let stewardMercy = false; // laid the keepsake — Steward pacified for good
+  // ── lock-pick minigame (optional strongboxes; world stays LIVE while picking) ──
+  let lockpicks = 2;
+  let picking = false;
+  let pickAngle = 0; // 0..1 sweeping pointer
+  let pickDir = 1;
+  let pickLo = 0; // sweet-spot bounds
+  let pickHi = 0;
+  let pickPins = 0;
+  let pickBoxId = '';
+  let pickSpeed = 1;
   let ink: number = TUNING.startInk;
   // ── survival systems ──
   let stamina: number = TUNING.staminaMax; // sprint reserve
@@ -186,6 +196,12 @@ export function createDirector(deps: DirectorDeps): Director {
       battery: Math.round(battery),
       bandages,
       binding: bindT > 0 ? 1 - bindT / TUNING.bindDuration : 0,
+      lockpicks,
+      picking,
+      pickAngle,
+      pickLo,
+      pickHi,
+      pickPins,
       objective,
       prompt: promptText,
       toast: toastText,
@@ -444,6 +460,12 @@ export function createDirector(deps: DirectorDeps): Director {
         if (hasCannon) cannonAmmo += 3;
         toast("Servants' ammo cache — pistol +12, a flare, and rounds for what you carry.");
         break;
+      case 'lockpick_1':
+      case 'lockpick_2':
+      case 'lockpick_3':
+        lockpicks += 1;
+        toast('A lockpick — for strongboxes the keys don’t fit. (Press to pick; it may snap.)');
+        break;
       // ── The Kitchen (cleaver melee upgrade) ──
       case 'cleaver':
         hasCleaver = true;
@@ -589,6 +611,51 @@ export function createDirector(deps: DirectorDeps): Director {
     audio.play('ui');
   };
 
+  // ── lock-pick minigame ──
+  const newSweetSpot = () => {
+    const width = Math.max(0.09, 0.18 - (3 - pickPins) * 0.03); // narrows as pins are set
+    pickLo = 0.1 + Math.random() * (0.8 - width);
+    pickHi = pickLo + width;
+  };
+  const startPick = (boxId: string) => {
+    picking = true;
+    pickBoxId = boxId;
+    pickPins = 3;
+    pickAngle = 0;
+    pickDir = 1;
+    pickSpeed = 1.0;
+    newSweetSpot();
+    audio.play('ui');
+    toast('Picking the lock — set each pin.  [E]/click set · [Q] cancel.');
+  };
+  const cancelPick = () => {
+    picking = false;
+    toast('You ease off the lock.');
+  };
+  const openLockbox = (boxId: string) => {
+    picking = false;
+    items.consume(boxId);
+    ammo += 8;
+    bandages += 1;
+    battery = Math.min(TUNING.batteryMax, battery + 40);
+    if (Math.random() < 0.4) { flares += 1; hasFlare = true; }
+    audio.play('vaultOpen');
+    toast('The strongbox clicks open — supplies within. (+8 rounds · +1 bandage · +40% battery)');
+  };
+  const attemptPin = () => {
+    if (pickAngle >= pickLo && pickAngle <= pickHi) {
+      pickPins -= 1;
+      audio.play('puzzleOk');
+      if (pickPins <= 0) openLockbox(pickBoxId);
+      else { pickSpeed += 0.28; newSweetSpot(); } // each pin sweeps a touch faster
+    } else {
+      lockpicks -= 1;
+      audio.play('puzzleBad');
+      if (lockpicks <= 0) { picking = false; toast('The pick snaps — your last. The lock holds.'); }
+      else toast(`The pick snaps! (${lockpicks} left)`);
+    }
+  };
+
   const interact = (itemId: string | null, exitIndex: number) => {
     // mercy on the downed Steward (carrying his keepsake) — not a real item
     if (itemId === '__mercy__') {
@@ -645,6 +712,13 @@ export function createDirector(deps: DirectorDeps): Director {
           audio.play('vaultOpen');
           objective = "You've read the Founder's confession. Wake the lighthouse; end what he began.";
           toast("The locket turns. Inside: the Founder's confession — nine souls fed to the tide to spare Hollowmere — and a cache of supplies. (+2 bandages, +12 rounds, +ink)");
+        }
+      } else if (it.kind === 'lockbox') {
+        if (lockpicks <= 0) {
+          toast('Locked tight. You need a lockpick.');
+          audio.play('puzzleBad');
+        } else {
+          startPick(itemId);
         }
       } else if (it.kind === 'furnace') {
         if (furnaceLit) {
@@ -937,6 +1011,10 @@ export function createDirector(deps: DirectorDeps): Director {
                             : 'Valve console (needs wheel)'
                         : it.kind === 'fusebox'
                           ? 'Throw the breakers'
+                          : it.kind === 'lockbox'
+                            ? lockpicks > 0
+                              ? 'Pick the lock'
+                              : 'Locked (need a lockpick)'
                           : it.kind === 'safe'
                             ? safeOpened
                               ? 'Wall-safe (open)'
@@ -1037,7 +1115,7 @@ export function createDirector(deps: DirectorDeps): Director {
 
     const intents = controls.consume();
     // inventory screen: toggle with [I]/[Tab]; pauses play (movement + enemies) while open
-    if (intents.inventory) inventoryOpen = !inventoryOpen;
+    if (intents.inventory && !picking) inventoryOpen = !inventoryOpen;
     if (inventoryOpen) {
       if (intents.invAction) applyInvAction(intents.invAction);
       pushStore();
@@ -1045,8 +1123,17 @@ export function createDirector(deps: DirectorDeps): Director {
     }
     const frozen = phase !== 'PLAY';
 
+    // ── lock-picking: rooted + vulnerable, world stays LIVE (enemies still hit) ──
+    if (picking) {
+      pickAngle += pickDir * pickSpeed * dt;
+      if (pickAngle >= 1) { pickAngle = 1; pickDir = -1; } else if (pickAngle <= 0) { pickAngle = 0; pickDir = 1; }
+      if (intents.use || intents.attack) attemptPin();
+      else if (intents.swap) cancelPick();
+    }
+    const busyPick = picking;
+
     // ── wound-binding: rooted + vulnerable while the bandage goes on ──
-    if (intents.bind && bindT <= 0 && !frozen) {
+    if (intents.bind && bindT <= 0 && !frozen && !busyPick) {
       if (bandages <= 0) {
         toast('No bandages.');
         audio.play('puzzleBad');
@@ -1059,17 +1146,17 @@ export function createDirector(deps: DirectorDeps): Director {
       }
     }
     const busyBinding = bindT > 0;
-    // ── sprint: gated on stamina, rooted-out while binding ──
-    const sprinting = intents.sprintHeld && stamina > 0 && canSprint && !busyBinding && !frozen;
+    // ── sprint: gated on stamina, rooted-out while binding/picking ──
+    const sprinting = intents.sprintHeld && stamina > 0 && canSprint && !busyBinding && !busyPick && !frozen;
 
-    // move (binding roots you in place)
+    // move (binding / picking roots you in place)
     actor.update({
       input: devMove ? ({ dir: { x: dx, y: dy }, actionHeld: false } as unknown as Input) : input,
       camera: world.camera,
       world,
       roomId: room,
       deltaSeconds: dt,
-      frozen: frozen || busyBinding,
+      frozen: frozen || busyBinding || busyPick,
       sprint: sprinting,
     });
 
@@ -1199,11 +1286,14 @@ export function createDirector(deps: DirectorDeps): Director {
       return;
     }
 
-    // interaction prompt + intents
+    // interaction prompt + intents (while picking a lock, those inputs are the
+    // minigame's — don't also fire interact/attack/swap here)
     const { itemId, exitIndex } = computePrompt();
-    if (intents.use) interact(itemId, exitIndex);
-    if (intents.attack && !busyBinding) doAttack();
-    if (intents.swap) cycleWeapon();
+    if (!busyPick) {
+      if (intents.use) interact(itemId, exitIndex);
+      if (intents.attack && !busyBinding) doAttack();
+      if (intents.swap) cycleWeapon();
+    }
     if (intents.slot > 0) equipSlot(intents.slot);
     if (intents.flashlight) toggleFlashlight();
 

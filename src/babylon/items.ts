@@ -75,7 +75,7 @@ function buildCrestDoorDressing(scene: Scene, node: TransformNode): CrestSocket[
   return sockets;
 }
 
-export type InteractKind = 'item' | 'savedesk' | 'book' | 'case' | 'crestdoor' | 'doc' | 'phono' | 'vault' | 'furnace' | 'valve' | 'fusebox' | 'npc' | 'safe';
+export type InteractKind = 'item' | 'savedesk' | 'book' | 'case' | 'crestdoor' | 'doc' | 'phono' | 'vault' | 'furnace' | 'valve' | 'fusebox' | 'npc' | 'safe' | 'lockbox';
 
 export interface Interactable {
   id: string;
@@ -216,6 +216,13 @@ const SPECS: ItemSpec[] = [
   { id: 'shells_1', roomId: 'study', lx: 2.6, lz: 1.8, kind: 'item', label: 'Pistol Ammo', color: [0.6, 0.5, 0.2], emissive: true, scale: 0.45, spin: true, viz: 'pistolAmmo' },
   { id: 'fenmoss_1', roomId: 'study', lx: -2.6, lz: 1.8, kind: 'item', label: 'Fenmoss', asset: ASSET_KEYS.props.fenmoss, color: [0.3, 0.7, 0.35], emissive: true, scale: 0.5, spin: true },
   { id: 'study_safe', roomId: 'study', lx: 4.2, lz: -3, kind: 'safe', label: "Founder's Wall-Safe", asset: ASSET_KEYS.props.fuseBox, color: [0.32, 0.3, 0.3], scale: 1.0, blockerHalf: 0.45 },
+  // ── optional pickable strongboxes + scattered lockpicks (skill-loot, live) ──
+  { id: 'lockbox_1', roomId: 'library', lx: 5.5, lz: -3, kind: 'lockbox', label: 'Strongbox', asset: ASSET_KEYS.props.itemBox, color: [0.34, 0.26, 0.16], scale: 0.9, blockerHalf: 0.45 },
+  { id: 'lockbox_2', roomId: 'long_gallery', lx: -5, lz: 0, kind: 'lockbox', label: 'Strongbox', asset: ASSET_KEYS.props.itemBox, color: [0.34, 0.26, 0.16], scale: 0.9, blockerHalf: 0.45 },
+  { id: 'lockbox_3', roomId: 'boiler', lx: -3, lz: -4, kind: 'lockbox', label: 'Strongbox', asset: ASSET_KEYS.props.itemBox, color: [0.34, 0.26, 0.16], scale: 0.9, blockerHalf: 0.45 },
+  { id: 'lockpick_1', roomId: 'corridor', lx: -3, lz: -3, kind: 'item', label: 'Lockpick', asset: ASSET_KEYS.props.ironKey, color: [0.6, 0.62, 0.66], emissive: true, scale: 0.38, spin: true },
+  { id: 'lockpick_2', roomId: 'study', lx: 2.6, lz: -2, kind: 'item', label: 'Lockpick', asset: ASSET_KEYS.props.ironKey, color: [0.6, 0.62, 0.66], emissive: true, scale: 0.38, spin: true },
+  { id: 'lockpick_3', roomId: 'music_room', lx: -4, lz: -3, kind: 'item', label: 'Lockpick', asset: ASSET_KEYS.props.ironKey, color: [0.6, 0.62, 0.66], emissive: true, scale: 0.38, spin: true },
   // Hall — the Crest Door
   { id: 'crest_door', roomId: 'hall', lx: 5.5, lz: -8, kind: 'crestdoor', label: 'Crest Door', asset: ASSET_KEYS.props.crestDoor, color: [0.28, 0.2, 0.12], scale: 2.4, blockerHalf: 1.2 },
   // Conservatory — herbs + the Tide-valve (revealed when the Bloom dies)
