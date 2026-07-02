@@ -460,7 +460,7 @@ function decorateRoom(scene: Scene, rt: RoomRuntime): void {
     // + Crest Door x5.5 stay clear).
     // dark, but NOT pure-black: it must catch the flashlight so it reads as a
     // recessed passage into shadow, not a flat black hole punched in the wall.
-    const upDark = createStandardMaterial(scene, `hall_updark_${def.id}`, new Color3(0.12, 0.12, 0.15), new Color3(0.03, 0.03, 0.045));
+    const upDark = createStandardMaterial(scene, `hall_updark_${def.id}`, new Color3(0.18, 0.17, 0.21), new Color3(0.05, 0.05, 0.07));
     // gentle flight rising to a low landing so a FULL-height doorway fits under
     // the 4.2m ceiling (a taller flight squashed the arch — the "cut-in-half" look).
     for (let i = 0; i <= 5; i++) {
@@ -671,7 +671,7 @@ function decorateRoom(scene: Scene, rt: RoomRuntime): void {
     box(0.2, 0.9, 0.2, 7, 0.75, d / 2 - 0.6, wood);
     // the way DOWN: a descending lip + a dark archway in the balcony wall, so the
     // stairhead reads from across the room (it was a blank wall before).
-    const downDark = createStandardMaterial(scene, `land_down_${def.id}`, new Color3(0.12, 0.12, 0.15), new Color3(0.03, 0.03, 0.045));
+    const downDark = createStandardMaterial(scene, `land_down_${def.id}`, new Color3(0.18, 0.17, 0.21), new Color3(0.05, 0.05, 0.07));
     for (let i = 0; i < 3; i++) {
       const h = 0.6 - i * 0.18; // a short descending lip toward the opening
       box(2.4, h, 0.5, 0, h / 2, d / 2 - 1.7 + i * 0.5, stone);
@@ -818,6 +818,17 @@ function glbDecor(scene: Scene, node: TransformNode, assetKey: string, lx: numbe
       m.isPickable = false;
       m.doNotSyncBoundingInfo = true;
       m.freezeWorldMatrix();
+      // Albedo floor: props authored with near-black albedo (black-lacquer
+      // piano, phonograph horn…) absorb ALL light and render as featureless
+      // black blocks in the dark manor. Lift only near-black channels so the
+      // prop catches the flashlight while staying dark-toned.
+      const mat = m.material as unknown as { albedoColor?: Color3; diffuseColor?: Color3 } | null;
+      const c = mat?.albedoColor ?? mat?.diffuseColor;
+      if (c && c.r < 0.14 && c.g < 0.14 && c.b < 0.14) {
+        c.r = Math.max(c.r, 0.14);
+        c.g = Math.max(c.g, 0.14);
+        c.b = Math.max(c.b, 0.16); // faint cool cast so it reads as lacquer, not mud
+      }
     });
   });
 }

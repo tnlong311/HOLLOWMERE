@@ -160,7 +160,8 @@ export function Hud({ phaseRef }: HudProps) {
         <div style={endStyle}>
           <h1 style={{ color: '#c2452f', letterSpacing: 4 }}>ARRANGED</h1>
           <p style={{ color: INK, opacity: 0.8 }}>The Steward tidies you among the others.</p>
-          <button style={beginBtnStyle} onClick={restart}>Try Again</button>
+          <button style={beginBtnStyle} onClick={() => triggerStart()}>▸ Rise at the last threshold</button>
+          <button style={{ ...beginBtnStyle, opacity: 0.55, fontSize: '0.82rem', marginTop: 6 }} onClick={restart}>Restart from the porch</button>
         </div>
       ) : null}
 

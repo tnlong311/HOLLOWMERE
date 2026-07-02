@@ -143,6 +143,21 @@ export function createDirector(deps: DirectorDeps): Director {
   let stewardRelocTimer = 0;
   let stalkTimer = 14; // persistent-hunt clock: the Steward tracks you down room-to-room
   let inventoryOpen = false; // full inventory screen (pauses play while open)
+  // ── checkpoint: snapshotted at each threshold (room entry). Death offers
+  // "rise at the last threshold" instead of a full restart — fair, not soft. ──
+  let checkpoint: {
+    room: RoomId;
+    entry: [number, number];
+    hp: number;
+    ammo: number;
+    rifleAmmo: number;
+    cannonAmmo: number;
+    flares: number;
+    ink: number;
+    bandages: number;
+    battery: number;
+    lockpicks: number;
+  } | null = null;
   let dmgFlash = 0; // 0..1 damage-feedback flash (decays)
   let dmgAngle = 0; // screen-relative yaw of the last incoming hit
   let stepStalkT = 0; // cadence timer for the Steward's proximity footsteps
@@ -222,6 +237,21 @@ export function createDirector(deps: DirectorDeps): Director {
   const enterRoom = (to: RoomId, entry: [number, number], faceYaw: number) => {
     room = to;
     stairArmed = false; // arriving on/near a stair must not bounce you straight back
+    // checkpoint at the threshold — with a mercy floor so you're never reborn
+    // half-dead in the dark (hp ≥ 40, battery ≥ 25)
+    checkpoint = {
+      room: to,
+      entry: [entry[0], entry[1]],
+      hp: Math.max(40, Math.round(hp)),
+      ammo,
+      rifleAmmo,
+      cannonAmmo,
+      flares,
+      ink,
+      bandages,
+      battery: Math.max(25, Math.round(battery)),
+      lockpicks,
+    };
     world.setActiveRoom(to);
     entities.setActiveRoom(to, world);
     items.setActiveRoom(to, world);
@@ -943,6 +973,31 @@ export function createDirector(deps: DirectorDeps): Director {
     toast('You are arranged among the others.');
   };
 
+  // Rise at the last threshold: restore the state snapshotted when you last
+  // crossed a door. World progress (crests, keys, opened locks, dead bosses)
+  // persists — only YOU rewind. Fair without deleting the run.
+  const respawnAtCheckpoint = () => {
+    if (!checkpoint) return;
+    hp = checkpoint.hp;
+    ammo = checkpoint.ammo;
+    rifleAmmo = checkpoint.rifleAmmo;
+    cannonAmmo = checkpoint.cannonAmmo;
+    flares = checkpoint.flares;
+    ink = checkpoint.ink;
+    bandages = checkpoint.bandages;
+    battery = checkpoint.battery;
+    lockpicks = checkpoint.lockpicks;
+    bindT = 0;
+    picking = false;
+    dmgFlash = 0;
+    stalkTimer = 20; // the hunt resets — a breath before it finds your trail again
+    phase = 'PLAY';
+    world.setFlashlight(battery > 0);
+    enterRoom(checkpoint.room, checkpoint.entry, Math.PI);
+    audio.play('save');
+    toast('You wake at the last threshold. The house pretends nothing happened.');
+  };
+
   const computePrompt = (): { itemId: string | null; exitIndex: number } => {
     const pos = actor.position;
     // mercy takes priority: a downed Steward + his keepsake in hand
@@ -1069,7 +1124,10 @@ export function createDirector(deps: DirectorDeps): Director {
       return;
     }
     if (phase === 'DEAD' || phase === 'WIN') {
-      controls.consume();
+      const i = controls.consume();
+      // DEAD: [E]/attack (or the HUD "Rise" button, which presses use) revives
+      // at the last threshold checkpoint instead of restarting the run.
+      if (phase === 'DEAD' && (i.use || i.attack) && checkpoint) respawnAtCheckpoint();
       pushStore();
       return;
     }
