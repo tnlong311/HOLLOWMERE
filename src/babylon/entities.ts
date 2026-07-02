@@ -32,7 +32,10 @@ interface Enemy {
   atkPhase: number; // 0 chase/idle · 1 windup · 2 strike · 3 recover
   struck: boolean; // has this attack already landed its hit
   atkCd: number; // cooldown before the next attack
-  aggro: boolean; // has noticed the player (stays true once triggered — relentless)
+  aggro: boolean; // is engaged (sees you, or hunting your last-known position)
+  alertT: number; // seconds of suspicion left once it loses sight of you
+  lkx: number; // last-known player position (world) — where it investigates
+  lkz: number;
   dropped: boolean; // Crawler has dropped from the ceiling
   nodesLeft: number; // Bloom heart-nodes remaining
   nodeHp: number; // hp of the current Bloom node
@@ -62,7 +65,7 @@ export interface EntitiesTick {
 
 export interface SceneEntities {
   setActiveRoom(id: RoomId, world: GameWorldObjects): void;
-  update(dt: number, playerPos: Vector3, world: GameWorldObjects): EntitiesTick;
+  update(dt: number, playerPos: Vector3, world: GameWorldObjects, sneak: boolean): EntitiesTick;
   // returns kind hit: 'kill' | 'hit' | 'burn-perm' | 'none' | 'steward-down' | 'steward-hit' | 'boss-hit' | 'boss-down'
   attackNearest(playerPos: Vector3, facingYaw: number, damage: number, isBurn: boolean, range: number, precise: boolean): string;
   activateSteward(roomId: RoomId): void;
@@ -291,6 +294,9 @@ export function createSceneEntities(scene: Scene): SceneEntities {
       struck: false,
       atkCd: 0,
       aggro: false,
+      alertT: 0,
+      lkx: 0,
+      lkz: 0,
       dropped: false, // crawler: on ceiling; leviathan: submerged (set true when exposed/dropped)
       nodesLeft: isBoss(kind) ? bossNodes(kind) : 0,
       nodeHp: bossNodeHp(kind),
@@ -444,16 +450,50 @@ export function createSceneEntities(scene: Scene): SceneEntities {
       activeRoom = id;
       refreshEnabled(world);
     },
-    update(dt, playerPos, world) {
+    update(dt, playerPos, world, sneak) {
       animT += dt;
       const result: EntitiesTick = { contactDamage: 0, burstDamage: 0, grabbed: false, stewardProx: 0, newCorpse: false, newRipen: false, burned: false, weeperSpat: false, bossActive: false };
-      // Detection scales with your light: the flashlight beam gives you away from
-      // far off, while moving in the dark keeps you hidden until they're close.
-      // Once an enemy notices you it stays aggroed (relentless) until killed.
-      const sight = TUNING.enemySightRange * (world.flashlightOn() ? 1.9 : 0.5);
-      const senses = (e: Enemy, dist: number): boolean => {
-        if (!e.aggro && (dist < sight || e.atkPhase !== 0)) e.aggro = true;
-        return e.aggro;
+      // Detection scales with your light AND your posture. The beam gives you
+      // away from far off; sneaking dark makes you a ghost until nearly touched.
+      // Losing sight of you starts a suspicion clock: the enemy hunts your
+      // LAST-KNOWN position, then stands down. Stealth is a real verb now.
+      const sight = TUNING.enemySightRange * (world.flashlightOn() ? (sneak ? 1.4 : 1.9) : sneak ? 0.25 : 0.5);
+      const senses = (e: Enemy, dist: number): 'seen' | 'alert' | false => {
+        const seen = dist < sight || dist < 2.2 || e.atkPhase !== 0; // point-blank always counts
+        if (seen) {
+          e.aggro = true;
+          e.alertT = 5;
+          e.lkx = playerPos.x;
+          e.lkz = playerPos.z;
+          return 'seen';
+        }
+        if (e.aggro) {
+          e.alertT -= dt;
+          if (e.alertT <= 0) {
+            e.aggro = false; // trail gone cold — it stands down
+            return false;
+          }
+          return 'alert';
+        }
+        return false;
+      };
+      // suspicion: stalk toward the last-known spot (no blind attacks)
+      const investigate = (e: Enemy, speed: number) => {
+        const dx = e.lkx - e.root.position.x;
+        const dz = e.lkz - e.root.position.z;
+        const dist = Math.hypot(dx, dz);
+        e.atkPhase = 0;
+        e.attackT = 0;
+        if (dist > 0.8) {
+          e.root.rotation.y = Math.atan2(dx / (dist || 1), dz / (dist || 1));
+          e.root.rotation.x = 0.08;
+          e.root.position.x += (dx / dist) * speed * dt;
+          e.root.position.z += (dz / dist) * speed * dt;
+          world.clampToRoom(e.roomId, e.root.position);
+          setCurrent(e, e.walk ?? e.idle);
+        } else {
+          setCurrent(e, e.idle ?? e.walk); // sniffing where you were
+        }
       };
       for (const e of enemies) {
         if (e.roomId !== activeRoom || e.state === 'gone') continue;
@@ -498,8 +538,11 @@ export function createSceneEntities(scene: Scene): SceneEntities {
           const dx = playerPos.x - e.root.position.x;
           const dz = playerPos.z - e.root.position.z;
           const dist = Math.hypot(dx, dz);
-          if (senses(e, dist)) {
+          const sense = senses(e, dist);
+          if (sense === 'seen') {
             runMelee(e, dx, dz, dist, dt, result, MELEE.sallowed!, world, e.state === 'ripened' ? 1.35 : 1);
+          } else if (sense === 'alert') {
+            investigate(e, MELEE.sallowed!.speed * 0.7);
           } else {
             e.atkPhase = 0;
             e.root.rotation.x = 0;
@@ -529,7 +572,9 @@ export function createSceneEntities(scene: Scene): SceneEntities {
           const dx = playerPos.x - e.root.position.x;
           const dz = playerPos.z - e.root.position.z;
           const dist = Math.hypot(dx, dz);
-          if (senses(e, dist)) runMelee(e, dx, dz, dist, dt, result, MELEE.hound!, world);
+          const hSense = senses(e, dist);
+          if (hSense === 'seen') runMelee(e, dx, dz, dist, dt, result, MELEE.hound!, world);
+          else if (hSense === 'alert') investigate(e, MELEE.hound!.speed * 0.6);
           else setCurrent(e, e.idle ?? e.walk);
         } else if (e.kind === 'crawler') {
           // perches on the ceiling, then drops and sprints when you're close
@@ -539,13 +584,16 @@ export function createSceneEntities(scene: Scene): SceneEntities {
           if (!e.dropped) {
             e.root.position.y = 3.4;
             e.root.rotation.set(Math.PI, animT * 0.8 + e.lx, 0); // upside-down skitter
-            if (dist < TUNING.crawlerDropRange || senses(e, dist)) e.dropped = true;
+            if (dist < TUNING.crawlerDropRange || senses(e, dist) === 'seen') e.dropped = true;
           } else if (e.root.position.y > 0.05 && e.atkPhase === 0) {
             e.root.position.y = Math.max(0, e.root.position.y - 9 * dt); // finish the drop
             e.root.rotation.set(0.1, Math.atan2(dx / (dist || 1), dz / (dist || 1)), 0);
           } else {
-            // grounded: erratic pounces + sweeping claw
-            runMelee(e, dx, dz, dist, dt, result, MELEE.crawler!, world);
+            // grounded: erratic pounces + sweeping claw (loses you if you slip away)
+            const cSense = senses(e, dist);
+            if (cSense === 'seen') runMelee(e, dx, dz, dist, dt, result, MELEE.crawler!, world);
+            else if (cSense === 'alert') investigate(e, MELEE.crawler!.speed * 0.6);
+            else setCurrent(e, e.idle ?? e.walk);
           }
         } else if (e.kind === 'weeper') {
           // acid-spitter: KITES to mid-range, telegraphs (rears its head), then a
@@ -598,7 +646,9 @@ export function createSceneEntities(scene: Scene): SceneEntities {
           const dx = playerPos.x - e.root.position.x;
           const dz = playerPos.z - e.root.position.z;
           const dist = Math.hypot(dx, dz);
-          if (senses(e, dist)) runMelee(e, dx, dz, dist, dt, result, MELEE.drowned!, world);
+          const dSense = senses(e, dist);
+          if (dSense === 'seen') runMelee(e, dx, dz, dist, dt, result, MELEE.drowned!, world);
+          else if (dSense === 'alert') investigate(e, MELEE.drowned!.speed * 0.8);
           else setCurrent(e, e.idle ?? e.walk);
         } else if (isBoss(e.kind)) {
           // rooted boss: a damaging spore/water AURA + ringed heart-nodes, plus a

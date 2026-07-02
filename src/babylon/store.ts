@@ -29,6 +29,7 @@ export interface GameStoreSnapshot {
   readonly battery: number; // 0..100 flashlight cell charge
   readonly bandages: number; // wound-binding kits carried
   readonly binding: number; // 0..1 wound-bind progress (0 = not binding)
+  readonly sneaking: boolean; // crouch-sneak stance active
   readonly lockpicks: number; // lockpicks carried (for pickable strongboxes)
   readonly picking: boolean; // lock-pick minigame active (world stays live)
   readonly pickAngle: number; // 0..1 sweeping pointer position
@@ -70,6 +71,7 @@ const initial: GameStoreSnapshot = {
   battery: 100,
   bandages: 2,
   binding: 0,
+  sneaking: false,
   lockpicks: 2,
   picking: false,
   pickAngle: 0,

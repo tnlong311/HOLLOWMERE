@@ -158,6 +158,7 @@ export function createDirector(deps: DirectorDeps): Director {
     battery: number;
     lockpicks: number;
   } | null = null;
+  let crouched = false; // sneak stance: slow + quiet + near-invisible in the dark
   let dmgFlash = 0; // 0..1 damage-feedback flash (decays)
   let dmgAngle = 0; // screen-relative yaw of the last incoming hit
   let stepStalkT = 0; // cadence timer for the Steward's proximity footsteps
@@ -211,6 +212,7 @@ export function createDirector(deps: DirectorDeps): Director {
       battery: Math.round(battery),
       bandages,
       binding: bindT > 0 ? 1 - bindT / TUNING.bindDuration : 0,
+      sneaking: crouched,
       lockpicks,
       picking,
       pickAngle,
@@ -1202,8 +1204,15 @@ export function createDirector(deps: DirectorDeps): Director {
       }
     }
     const busyBinding = bindT > 0;
+    // ── sneak: toggle with [C]; sprinting breaks the crouch ──
+    if (intents.crouch && !frozen) {
+      crouched = !crouched;
+      audio.play('ui');
+      toast(crouched ? 'You sink low. Quiet now.' : 'You rise to your feet.');
+    }
     // ── sprint: gated on stamina, rooted-out while binding/picking ──
     const sprinting = intents.sprintHeld && stamina > 0 && canSprint && !busyBinding && !busyPick && !frozen;
+    if (sprinting) crouched = false;
 
     // move (binding / picking roots you in place)
     actor.update({
@@ -1214,6 +1223,7 @@ export function createDirector(deps: DirectorDeps): Director {
       deltaSeconds: dt,
       frozen: frozen || busyBinding || busyPick,
       sprint: sprinting,
+      crouch: crouched,
     });
 
     // ── survival meters ──
@@ -1246,7 +1256,7 @@ export function createDirector(deps: DirectorDeps): Director {
       stepTimer -= dt;
       if (stepTimer <= 0) {
         audio.play('step');
-        stepTimer = sprinting ? 0.28 : 0.42;
+        stepTimer = sprinting ? 0.28 : crouched ? 0.85 : 0.42; // sneaking treads softly
       }
     }
 
@@ -1266,7 +1276,7 @@ export function createDirector(deps: DirectorDeps): Director {
     }
 
     // enemies
-    const et = entities.update(dt, actor.position, world);
+    const et = entities.update(dt, actor.position, world, crouched);
     if (et.contactDamage > 0) {
       hp -= et.contactDamage * dt;
       if (et.grabbed && Math.random() < dt * 1.5) audio.play('grab');
@@ -1322,7 +1332,7 @@ export function createDirector(deps: DirectorDeps): Director {
     if (stewardActivated && entities.stewardActive() && stewardRelocTimer <= 0) {
       const sr = entities.stewardRoom();
       if (sr !== null && sr !== room) {
-        stalkTimer -= dt * (world.flashlightOn() ? 1.8 : 1.0);
+        stalkTimer -= dt * (world.flashlightOn() ? 1.8 : 1.0) * (crouched ? 0.55 : 1); // sneaking muddies your trail
         if (stalkTimer <= 0) {
           entities.relocateStewardTo(room, world);
           audio.play('stewardStep');

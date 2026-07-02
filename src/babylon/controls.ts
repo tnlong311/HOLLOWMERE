@@ -17,9 +17,10 @@ interface Intents {
   bind: boolean; // edge: bind a wound (heal, if a bandage is carried)
   inventory: boolean; // edge: toggle the full inventory screen
   invAction: { kind: 'equip' | 'use'; key: string } | null; // click action from the inventory UI
+  crouch: boolean; // edge: toggle sneak (slow, quiet, near-invisible in the dark)
 }
 
-const intents: Intents = { use: false, attack: false, swap: false, quickTurn: false, attackHeld: false, slot: 0, flashlight: false, sprintHeld: false, bind: false, inventory: false, invAction: null };
+const intents: Intents = { use: false, attack: false, swap: false, quickTurn: false, attackHeld: false, slot: 0, flashlight: false, sprintHeld: false, bind: false, inventory: false, invAction: null, crouch: false };
 
 // persisted player settings (Settings panel)
 const settings = {
@@ -64,6 +65,9 @@ export const controls = {
   pressInvAction(kind: 'equip' | 'use', key: string) {
     intents.invAction = { kind, key };
   },
+  pressCrouch() {
+    intents.crouch = true;
+  },
   setSprint(on: boolean) {
     intents.sprintHeld = on;
   },
@@ -85,6 +89,7 @@ export const controls = {
     intents.bind = false;
     intents.inventory = false;
     intents.invAction = null;
+    intents.crouch = false;
     return snap;
   },
   peekAttackHeld() {
@@ -175,6 +180,9 @@ export function attachKeyboard(): () => void {
         break;
       case 'KeyB':
         controls.pressBind();
+        break;
+      case 'KeyC':
+        controls.pressCrouch();
         break;
       case 'ShiftLeft':
       case 'ShiftRight':
