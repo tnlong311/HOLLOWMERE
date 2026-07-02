@@ -24,8 +24,23 @@ export function Hud({ phaseRef }: HudProps) {
   useEffect(() => subscribeGameStore(setS), []);
   void phaseRef;
 
+  // Settings (brightness calibration — the manor is very dark)
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bright, setBright] = useState(() => {
+    try { const v = Number(localStorage.getItem('hm_brightness')); return v >= 0.6 && v <= 2 ? v : 1; } catch { return 1; }
+  });
+  const applyBright = (v: number) => {
+    setBright(v);
+    void import('./controls').then((m) => m.controls.setBrightness(v));
+  };
+
   const healthColor = s.healthState === 'danger' ? '#c2452f' : s.healthState === 'caution' ? '#d98a2b' : AMBER;
-  const restart = () => window.location.reload();
+  // Respawn: reload the runtime but flag the intro to skip straight to "Enter"
+  // (no replaying the whole story cutscene on every death).
+  const restart = () => {
+    try { sessionStorage.setItem('hm_skipIntro', '1'); } catch { /* private mode */ }
+    window.location.reload();
+  };
 
   // LLM-EXTENSION:HUD — survival-horror DOM HUD driven by the Babylon runtime/store.
   // DO NOT REMOVE the LLM-EXTENSION:HUD tag — templates/3d/scripts/check-architecture.mjs requires it to appear exactly once across the src tree.
@@ -34,6 +49,16 @@ export function Hud({ phaseRef }: HudProps) {
       {/* steward proximity pulse */}
       {s.hudPhase === 'PLAY' && s.stewardNear > 0.05 ? (
         <div style={{ ...pulseStyle, boxShadow: `inset 0 0 ${40 + s.stewardNear * 120}px ${10 + s.stewardNear * 40}px rgba(150,20,20,${0.18 + s.stewardNear * 0.5})` }} />
+      ) : null}
+
+      {/* directional damage flash — a red bloom on the side the hit came from */}
+      {s.hudPhase === 'PLAY' && s.hitFlash > 0.02 ? (
+        <div
+          style={{
+            ...pulseStyle,
+            background: `radial-gradient(circle at ${50 + Math.sin(s.hitDir) * 38}% ${50 - Math.cos(s.hitDir) * 38}%, rgba(150,10,10,${(0.55 * s.hitFlash).toFixed(3)}), rgba(120,0,0,0) 55%)`,
+          }}
+        />
       ) : null}
 
       {s.hudPhase === 'PLAY' ? (
@@ -126,37 +151,9 @@ export function Hud({ phaseRef }: HudProps) {
         </div>
       ) : null}
 
-      {/* LOADING — preloads every model + physics before you can enter */}
-      {!s.ready ? (
-        <div style={titleScreenStyle}>
-          <h1 style={{ letterSpacing: 8, color: INK, margin: 0 }}>HOLLOWMERE</h1>
-          <p style={{ color: AMBER, letterSpacing: 3, marginTop: 10, fontSize: '0.8rem' }}>
-            {s.message && s.message !== 'ready' ? s.message.toUpperCase() : 'PRELOADING THE ESTATE…'}
-          </p>
-          <div style={{ width: 260, height: 6, marginTop: 18, background: 'rgba(233,220,195,0.15)', borderRadius: 3, overflow: 'hidden' }}>
-            <div style={{ width: `${Math.round(s.loadProgress * 100)}%`, height: '100%', background: AMBER, borderRadius: 3, transition: 'width 160ms linear' }} />
-          </div>
-          <p style={{ color: INK, opacity: 0.55, marginTop: 10, fontSize: '0.72rem' }}>{Math.round(s.loadProgress * 100)}%</p>
-        </div>
-      ) : null}
-
-      {/* TITLE */}
-      {s.ready && s.hudPhase === 'TITLE' ? (
-        <div style={titleScreenStyle} onClick={() => triggerStart()}>
-          {titleImg ? <img src={titleImg} alt="HOLLOWMERE" style={titleArtStyle} /> : <h1 style={{ letterSpacing: 6, color: INK }}>HOLLOWMERE</h1>}
-          <p style={{ color: AMBER, letterSpacing: 3, marginTop: 8 }}>THE ESTATE</p>
-          <p style={{ color: INK, opacity: 0.7, maxWidth: 360, textAlign: 'center', fontSize: '0.82rem', lineHeight: 1.5 }}>
-            A relief courier on a tidal island. The tide is coming in. Find the four crests; the first is the Stag.
-          </p>
-          <button style={beginBtnStyle} onClick={(e) => { e.stopPropagation(); triggerStart(); }}>
-            ▸ Enter the House
-          </button>
-          <p style={{ color: INK, opacity: 0.6, fontSize: '0.74rem', marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>
-            <b style={{ color: AMBER }}>WASD</b> move&nbsp;·&nbsp;<b style={{ color: AMBER }}>Mouse</b> look (click to capture)<br />
-            <b style={{ color: AMBER }}>Left-click</b> attack&nbsp;·&nbsp;<b style={{ color: AMBER }}>Right-click</b> use&nbsp;·&nbsp;<b style={{ color: AMBER }}>1–9</b> select item&nbsp;·&nbsp;<b style={{ color: AMBER }}>Esc</b> release
-          </p>
-        </div>
-      ) : null}
+      {/* INTRO CUTSCENE — tells the story while every asset preloads behind it;
+          the final "Enter" stays locked until the estate is fully loaded. */}
+      {s.hudPhase === 'TITLE' ? <IntroCutscene ready={s.ready} loadProgress={s.loadProgress} /> : null}
 
       {/* DEATH */}
       {s.hudPhase === 'DEAD' ? (
@@ -183,6 +180,34 @@ export function Hud({ phaseRef }: HudProps) {
           <button style={beginBtnStyle} onClick={restart}>Again</button>
         </div>
       ) : null}
+
+      {/* Full categorized inventory (toggle with I / Tab — pauses play) */}
+      {s.inventoryOpen ? <InventoryScreen s={s} /> : null}
+
+      {/* Inventory button — visible affordance for the I/Tab inventory screen. */}
+      {s.hudPhase === 'PLAY' ? (
+        <button
+          style={invBtnStyle}
+          title="Inventory (I or Tab)"
+          onClick={() => void import('./controls').then((m) => m.controls.pressInventory())}
+        >
+          🎒 <span style={{ fontSize: '0.62rem', letterSpacing: 1, opacity: 0.7 }}>[I]</span>
+        </button>
+      ) : null}
+
+      {/* Settings gear — always available (click when the pointer is free). */}
+      <button style={gearStyle} title="Settings" onClick={() => setSettingsOpen((v) => !v)}>⚙</button>
+      {settingsOpen ? (
+        <div style={settingsPanelStyle}>
+          <div style={{ color: AMBER, letterSpacing: 3, fontSize: '0.9rem', marginBottom: 4 }}>SETTINGS</div>
+          <label style={{ color: INK, fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: 6, width: 260 }}>
+            <span>Brightness <b style={{ color: AMBER }}>{Math.round(bright * 100)}%</b></span>
+            <input type="range" min={0.7} max={1.8} step={0.05} value={bright} onChange={(e) => applyBright(Number(e.target.value))} style={{ width: '100%', accentColor: AMBER }} />
+            <span style={{ opacity: 0.55, fontSize: '0.68rem' }}>Raise this if the manor is too dark to read on your display.</span>
+          </label>
+          <button style={{ ...beginBtnStyle, marginTop: 14 }} onClick={() => setSettingsOpen(false)}>Close</button>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -190,6 +215,148 @@ export function Hud({ phaseRef }: HudProps) {
 // TITLE start: route through the shared intent bridge (mobile + desktop).
 function triggerStart() {
   void import('./controls').then((m) => m.controls.pressUse());
+}
+
+// ── Full categorized inventory screen ────────────────────────────────
+// Groups everything you carry by category (Weapons / Tools / Aid & Supplies /
+// Keys / Crests). Read-only overview; equip still happens via the quick-bar
+// number keys. Toggled with [I] / [Tab]; play is paused while it's open.
+const CAT_GLYPH: Record<string, string> = { weapon: '✦', tool: '🔦', key: '🗝', crest: '◈', aid: '✚' };
+
+function InventoryScreen({ s }: { s: GameStoreSnapshot }) {
+  // free the mouse cursor so items can be clicked while the panel is up
+  useEffect(() => { try { document.exitPointerLock?.(); } catch { /* ignore */ } }, []);
+  const of = (k: string) => s.inventory.filter((it) => it.kind === k);
+  const act = (kind: 'equip' | 'use', key: string) => void import('./controls').then((m) => m.controls.pressInvAction(kind, key));
+  type Act = { kind: 'equip' | 'use'; key: string; label: string };
+  type Row = { key: string; label: string; note?: string; equipped?: boolean; action?: Act };
+  const A = (kind: 'equip' | 'use', key: string, label: string): Act => ({ kind, key, label });
+  const sections: { label: string; glyph: string; items: Row[] }[] = [
+    {
+      label: 'Weapons', glyph: CAT_GLYPH.weapon,
+      items: of('weapon').map((it): Row => ({ key: it.key, label: it.label, note: it.key === 'dagger' ? '' : `${it.count} rnd`, equipped: it.equipped, action: A('equip', it.key, it.equipped ? 'Equipped' : 'Equip') })),
+    },
+    {
+      label: 'Tools', glyph: CAT_GLYPH.tool,
+      items: of('tool').map((it): Row => ({ key: it.key, label: it.label, note: it.equipped ? 'ON' : 'OFF', equipped: it.equipped, action: A('equip', it.key, it.equipped ? 'Turn off' : 'Turn on') })),
+    },
+    {
+      label: 'Aid & Supplies', glyph: CAT_GLYPH.aid,
+      items: [
+        { key: 'bandage', label: 'Bandage', note: `×${s.bandages}`, action: s.bandages > 0 ? A('use', 'bandage', 'Use') : undefined },
+        { key: 'battery', label: 'Battery', note: `${s.battery}%` },
+        { key: 'ink', label: 'Ledger Ink', note: `×${s.ink}` },
+      ],
+    },
+    { label: 'Keys', glyph: CAT_GLYPH.key, items: of('key').map((it) => ({ key: it.key, label: it.label })) },
+    { label: 'Crests', glyph: CAT_GLYPH.crest, items: of('crest').map((it) => ({ key: it.key, label: it.label })) },
+  ].filter((sec) => sec.items.length > 0);
+  const close = () => void import('./controls').then((m) => m.controls.pressInventory());
+  return (
+    <div style={invScreenStyle}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 18 }}>
+        <h1 style={{ letterSpacing: 6, color: INK, margin: 0, fontSize: '1.4rem' }}>INVENTORY</h1>
+        <span style={{ color: INK, opacity: 0.5, fontSize: '0.74rem' }}>[I] / [Tab] to close · play is paused</span>
+      </div>
+      <div style={invGridStyle}>
+        {sections.map((sec) => (
+          <div key={sec.label} style={invSectionStyle}>
+            <div style={{ color: AMBER, letterSpacing: 2, fontSize: '0.82rem', borderBottom: `1px solid ${AMBER}44`, paddingBottom: 5, marginBottom: 8 }}>
+              {sec.glyph} {sec.label.toUpperCase()}
+            </div>
+            {sec.items.map((it) => (
+              <div
+                key={it.key}
+                onClick={it.action ? () => act(it.action!.kind, it.action!.key) : undefined}
+                style={{ ...invRowStyle, cursor: it.action ? 'pointer' : 'default', borderColor: it.equipped ? AMBER : 'rgba(233,220,195,0.16)' }}
+              >
+                <span style={{ color: it.equipped ? AMBER : INK }}>{it.label}</span>
+                <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  {it.note ? <span style={{ color: INK, opacity: 0.55, fontSize: '0.76rem' }}>{it.note}</span> : null}
+                  {it.action && !it.equipped ? <span style={{ color: AMBER, fontSize: '0.74rem' }}>▸ {it.action.label}</span> : null}
+                </span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <button style={{ ...beginBtnStyle, marginTop: 22 }} onClick={close}>Close</button>
+    </div>
+  );
+}
+
+// ── Opening story cutscene ────────────────────────────────────────────
+// A sequence of narrative beats that plays the moment the game mounts. Every
+// model + the physics engine preload in the background while it runs, so by the
+// time the reader reaches the last card the estate is (usually) ready. The
+// final "Enter" is gated on `ready` — if assets are still coming in it shows the
+// live progress instead, so you can never drop into a half-loaded house.
+const STORY: { title?: string; text: string }[] = [
+  { title: 'HOLLOWMERE', text: 'A great house on the tidal flats, cut from the mainland whenever the sea comes in. A letter was sent here, once. It was never answered.' },
+  { text: 'You are the relief courier. Behind you the causeway is already drowning; there is no road back now — only forward, and up, into the unlit house.' },
+  { text: 'Hollowmere does not keep its dead. Strike one down and it will ripen and rise again. Only fire keeps them still — your flares are mercy. Spend them well.' },
+  { text: 'Your flashlight is the only sight these halls will give you. But light carries, and something older lives here. It comes faster when it sees you burn.' },
+  { text: 'Find the four crests. Wake the lighthouse. Learn what the Vane family gave to the water — and why, all these years, the water has never given it back.' },
+  { text: 'Ration the flame. Bind your wounds. The tide is rising.' },
+];
+
+function IntroCutscene({ ready, loadProgress }: { ready: boolean; loadProgress: number }) {
+  // On respawn we jump straight to the final "Enter" card — no story replay.
+  const [i, setI] = useState(() => {
+    try { return sessionStorage.getItem('hm_skipIntro') ? STORY.length - 1 : 0; } catch { return 0; }
+  });
+  useEffect(() => { try { sessionStorage.removeItem('hm_skipIntro'); } catch { /* ignore */ } }, []);
+  const last = i >= STORY.length - 1;
+  useEffect(() => {
+    if (last) return;
+    const t = setTimeout(() => setI((n) => Math.min(STORY.length - 1, n + 1)), 6200);
+    return () => clearTimeout(t);
+  }, [i, last]);
+  const advance = () => setI((n) => Math.min(STORY.length - 1, n + 1));
+  const slide = STORY[i];
+  const pct = Math.round(loadProgress * 100);
+  return (
+    <div style={cutsceneStyle} onClick={!last ? advance : undefined}>
+      {i === 0 && titleImg ? <img src={titleImg} alt="HOLLOWMERE" style={{ ...titleArtStyle, marginBottom: 8 }} /> : null}
+      {slide.title && !(i === 0 && titleImg) ? <h1 style={{ letterSpacing: 8, color: INK, margin: 0 }}>{slide.title}</h1> : null}
+      <p key={i} style={cutsceneTextStyle}>{slide.text}</p>
+
+      {/* progress dots */}
+      <div style={{ display: 'flex', gap: 7, marginTop: 20 }}>
+        {STORY.map((_, k) => (
+          <span key={k} style={{ width: 7, height: 7, borderRadius: '50%', background: k === i ? AMBER : 'rgba(233,220,195,0.28)' }} />
+        ))}
+      </div>
+
+      {!last ? (
+        <>
+          <button style={beginBtnStyle} onClick={(e) => { e.stopPropagation(); advance(); }}>Continue ▸</button>
+          <button
+            style={{ marginTop: 12, background: 'none', border: 'none', color: INK, opacity: 0.4, fontFamily: fontStack, fontSize: '0.72rem', letterSpacing: 1, cursor: 'pointer', pointerEvents: 'auto' }}
+            onClick={(e) => { e.stopPropagation(); setI(STORY.length - 1); }}
+          >
+            skip ⏭
+          </button>
+        </>
+      ) : ready ? (
+        <>
+          <button style={{ ...beginBtnStyle, marginTop: 20 }} onClick={triggerStart}>▸ Enter Hollowmere</button>
+          <p style={{ color: INK, opacity: 0.55, fontSize: '0.72rem', marginTop: 16, textAlign: 'center', lineHeight: 1.6 }}>
+            <b style={{ color: AMBER }}>WASD</b> move · <b style={{ color: AMBER }}>Mouse</b> look · <b style={{ color: AMBER }}>Shift</b> sprint · <b style={{ color: AMBER }}>L</b> flashlight · <b style={{ color: AMBER }}>B</b> bind wound<br />
+            <b style={{ color: AMBER }}>Left-click</b> attack · <b style={{ color: AMBER }}>E</b> use · <b style={{ color: AMBER }}>1–9</b> select · <b style={{ color: AMBER }}>I</b>/<b style={{ color: AMBER }}>Tab</b> inventory · <b style={{ color: AMBER }}>Esc</b> release
+          </p>
+        </>
+      ) : (
+        <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+          <p style={{ color: AMBER, letterSpacing: 3, fontSize: '0.78rem', margin: 0 }}>THE HOUSE IS STILL WAKING…</p>
+          <div style={{ width: 260, height: 6, background: 'rgba(233,220,195,0.15)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ width: `${pct}%`, height: '100%', background: AMBER, borderRadius: 3, transition: 'width 160ms linear' }} />
+          </div>
+          <p style={{ color: INK, opacity: 0.5, fontSize: '0.72rem', margin: 0 }}>{pct}%</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const pulseStyle: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', transition: 'box-shadow 120ms linear' };
@@ -204,6 +371,13 @@ const resRowStyle: CSSProperties = { display: 'flex', gap: 10, fontSize: '0.78re
 const miniTrackStyle: CSSProperties = { flex: 1, height: 4, background: 'rgba(233,220,195,0.16)', borderRadius: 2, overflow: 'hidden' };
 const meterLabelStyle: CSSProperties = { fontSize: '0.56rem', letterSpacing: 1, opacity: 0.6, width: 24 };
 const bindWrapStyle: CSSProperties = { position: 'absolute', top: '60%', left: '50%', transform: 'translateX(-50%)', padding: '8px 16px', background: 'rgba(8,7,6,0.8)', borderRadius: 6, color: INK, fontFamily: fontStack, fontSize: '0.82rem', textAlign: 'center', pointerEvents: 'none' };
+const gearStyle: CSSProperties = { position: 'absolute', bottom: 16, right: 16, width: 40, height: 40, background: 'rgba(8,7,6,0.6)', border: '1px solid rgba(233,220,195,0.3)', borderRadius: 6, color: '#e9dcc3', fontFamily: fontStack, fontSize: '1.2rem', cursor: 'pointer', pointerEvents: 'auto' };
+const invBtnStyle: CSSProperties = { position: 'absolute', bottom: 16, right: 64, height: 40, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5, background: 'rgba(8,7,6,0.6)', border: '1px solid rgba(217,164,65,0.45)', borderRadius: 6, color: '#e9dcc3', fontFamily: fontStack, fontSize: '1.05rem', cursor: 'pointer', pointerEvents: 'auto' };
+const invScreenStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'radial-gradient(circle at 50% 40%, rgba(16,12,9,0.94), rgba(2,2,3,0.98))', fontFamily: fontStack, pointerEvents: 'auto', padding: 24 };
+const invGridStyle: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 240px))', gap: 18, maxWidth: 900, width: '100%', justifyContent: 'center' };
+const invSectionStyle: CSSProperties = { background: 'rgba(8,7,6,0.5)', border: '1px solid rgba(233,220,195,0.12)', borderRadius: 8, padding: '12px 14px', display: 'flex', flexDirection: 'column' };
+const invRowStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '7px 10px', marginBottom: 5, background: 'rgba(8,7,6,0.5)', border: '1px solid', borderRadius: 5, color: INK, fontFamily: fontStack, fontSize: '0.86rem' };
+const settingsPanelStyle: CSSProperties = { position: 'absolute', bottom: 66, right: 16, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, padding: '16px 18px', background: 'rgba(8,7,6,0.92)', border: '1px solid rgba(217,164,65,0.4)', borderRadius: 8, fontFamily: fontStack, pointerEvents: 'auto' };
 const reticleStyle: CSSProperties = { position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: 'rgba(217,164,65,0.5)', fontFamily: fontStack, fontSize: '1.2rem', pointerEvents: 'none' };
 const lookHintStyle: CSSProperties = { position: 'absolute', top: '58%', left: '50%', transform: 'translateX(-50%)', padding: '5px 12px', background: 'rgba(8,7,6,0.6)', borderRadius: 4, color: '#e9dcc3', fontFamily: fontStack, fontSize: '0.74rem', opacity: 0.75, pointerEvents: 'none', whiteSpace: 'nowrap' };
 const promptStyle: CSSProperties = { position: 'absolute', bottom: 118, left: '50%', transform: 'translateX(-50%)', padding: '7px 16px', background: 'rgba(8,7,6,0.78)', border: `1px solid ${AMBER}55`, borderRadius: 6, color: INK, fontFamily: fontStack, fontSize: '0.86rem', pointerEvents: 'none', userSelect: 'none', whiteSpace: 'nowrap' };
@@ -214,5 +388,7 @@ const slotNumStyle: CSSProperties = { position: 'absolute', top: 2, left: 4, fon
 const curtainStyle: CSSProperties = { position: 'absolute', inset: 0, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: INK, fontFamily: fontStack, fontSize: '1.4rem', letterSpacing: 4, pointerEvents: 'none' };
 const titleScreenStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'radial-gradient(circle at 50% 40%, rgba(20,16,12,0.6), rgba(2,2,3,0.92))', fontFamily: fontStack, pointerEvents: 'auto', cursor: 'pointer', padding: 24 };
 const titleArtStyle: CSSProperties = { maxWidth: 'min(80vw, 460px)', imageRendering: 'pixelated', filter: 'drop-shadow(0 4px 16px #000)' };
+const cutsceneStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, background: 'radial-gradient(circle at 50% 38%, rgba(18,14,10,0.72), rgba(2,2,3,0.97))', fontFamily: fontStack, pointerEvents: 'auto', cursor: 'pointer', padding: '24px 32px', textAlign: 'center', userSelect: 'none' };
+const cutsceneTextStyle: CSSProperties = { color: INK, opacity: 0.88, maxWidth: 520, fontSize: '1.02rem', lineHeight: 1.75, marginTop: 18, minHeight: 96, textShadow: '0 1px 3px #000' };
 const beginBtnStyle: CSSProperties = { marginTop: 16, padding: '10px 26px', background: 'transparent', color: AMBER, border: `1px solid ${AMBER}`, borderRadius: 4, fontFamily: fontStack, fontSize: '1rem', letterSpacing: 2, cursor: 'pointer', pointerEvents: 'auto' };
 const endStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, background: 'rgba(2,2,3,0.9)', fontFamily: fontStack, pointerEvents: 'auto', padding: 24, textAlign: 'center' };

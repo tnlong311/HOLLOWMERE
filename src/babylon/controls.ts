@@ -15,9 +15,18 @@ interface Intents {
   flashlight: boolean; // edge: toggle the flashlight on/off
   sprintHeld: boolean; // held: sprint while moving (drains stamina)
   bind: boolean; // edge: bind a wound (heal, if a bandage is carried)
+  inventory: boolean; // edge: toggle the full inventory screen
+  invAction: { kind: 'equip' | 'use'; key: string } | null; // click action from the inventory UI
 }
 
-const intents: Intents = { use: false, attack: false, swap: false, quickTurn: false, attackHeld: false, slot: 0, flashlight: false, sprintHeld: false, bind: false };
+const intents: Intents = { use: false, attack: false, swap: false, quickTurn: false, attackHeld: false, slot: 0, flashlight: false, sprintHeld: false, bind: false, inventory: false, invAction: null };
+
+// persisted player settings (Settings panel)
+const settings = {
+  brightness: (() => {
+    try { const v = Number(localStorage.getItem('hm_brightness')); return v >= 0.6 && v <= 2 ? v : 1; } catch { return 1; }
+  })(),
+};
 
 // accumulated mouse-look delta (pointer-lock), consumed by the actor each frame
 const look = { dx: 0, dy: 0 };
@@ -49,8 +58,21 @@ export const controls = {
   pressBind() {
     intents.bind = true;
   },
+  pressInventory() {
+    intents.inventory = true;
+  },
+  pressInvAction(kind: 'equip' | 'use', key: string) {
+    intents.invAction = { kind, key };
+  },
   setSprint(on: boolean) {
     intents.sprintHeld = on;
+  },
+  setBrightness(v: number) {
+    settings.brightness = v;
+    try { localStorage.setItem('hm_brightness', String(v)); } catch { /* private mode */ }
+  },
+  getBrightness() {
+    return settings.brightness;
   },
   consume(): Intents {
     const snap = { ...intents };
@@ -61,6 +83,8 @@ export const controls = {
     intents.slot = 0;
     intents.flashlight = false;
     intents.bind = false;
+    intents.inventory = false;
+    intents.invAction = null;
     return snap;
   },
   peekAttackHeld() {
@@ -136,9 +160,12 @@ export function attachKeyboard(): () => void {
         controls.pressAttack();
         break;
       case 'KeyQ':
+        controls.pressSwap();
+        break;
+      case 'KeyI':
       case 'Tab':
         e.preventDefault();
-        controls.pressSwap();
+        controls.pressInventory();
         break;
       case 'KeyR':
         controls.pressQuickTurn();
@@ -166,10 +193,31 @@ export function attachKeyboard(): () => void {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') controls.setSprint(false);
     if (e.code === 'Space' || e.code === 'KeyF') controls.releaseAttack();
   };
+  // ── WASD-while-sprinting fix ──────────────────────────────────────
+  // @rezona's movement tracks keys by `e.key` (case-sensitive). Holding Shift
+  // flips WASD to uppercase, so a movement key pressed as 'w' but released as
+  // 'W' never clears → the character slides forever. Mirror every single-letter
+  // key event in the opposite case (with a NO code, so our own e.code action
+  // handlers don't double-fire) so the movement set always adds/clears both.
+  let flipping = false;
+  const mirrorCase = (e: KeyboardEvent) => {
+    if (flipping) return;
+    const k = e.key;
+    if (k.length !== 1 || !/[a-zA-Z]/.test(k)) return;
+    const other = k === k.toLowerCase() ? k.toUpperCase() : k.toLowerCase();
+    if (other === k) return;
+    flipping = true;
+    window.dispatchEvent(new KeyboardEvent(e.type, { key: other }));
+    flipping = false;
+  };
   window.addEventListener('keydown', onKey);
   window.addEventListener('keyup', onUp);
+  window.addEventListener('keydown', mirrorCase);
+  window.addEventListener('keyup', mirrorCase);
   return () => {
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('keyup', onUp);
+    window.removeEventListener('keydown', mirrorCase);
+    window.removeEventListener('keyup', mirrorCase);
   };
 }

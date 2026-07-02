@@ -76,8 +76,10 @@ export interface GameWorldObjects {
   stairEyeOffset(id: RoomId, pos: Vector3): number; // extra eye height while on a stair
   stairTrigger(id: RoomId, pos: Vector3): string | null; // exitId if at the top of a walkable stair
   setPixelParams(pixel: number, levels: number, dither: number): void;
+  setBrightness(v: number): void; // player gamma calibration
   toggleFlashlight(): boolean; // returns new on/off state
   setFlashlight(on: boolean): void;
+  setFlashlightHealth(frac: number): void; // 0..1 battery — drives dying-cell flicker
   flashlightOn(): boolean;
   update(dt: number, lanternTarget: Vector3): void;
   dispose(): void;
@@ -106,6 +108,7 @@ function registerCrushShader(): void {
     uniform float uHealth;   // 1 full .. 0 dead
     uniform float uSteward;  // 0..1 proximity -> chromatic aberration
     uniform vec3  uTint;
+    uniform float uBright;   // player brightness/gamma calibration
 
     float bayer4(vec2 p){
       int x = int(mod(p.x,4.0));
@@ -133,8 +136,9 @@ function registerCrushShader(): void {
       col.g = texture2D(textureSampler, puv).g;
       col.b = texture2D(textureSampler, puv-vec2(ca,0.0)).b;
 
-      // per-wing palette tint
+      // per-wing palette tint + player brightness calibration
       col *= uTint;
+      col = pow(col, vec3(1.0 / uBright)); // gamma lift for dark displays (uBright>1 brightens shadows)
 
       // health LUT: desaturate + push red as health falls
       float lum = dot(col, vec3(0.299,0.587,0.114));
@@ -856,6 +860,7 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
   flashlight.intensity = 4.2;
   flashlight.range = 34;
   let flashOn = true;
+  let flashHealth = 1; // battery fraction (0..1) — drives the dying-cell flicker
 
   // A second accent light for the save-room hearth (only bright in 'save' wing).
   const hearth = new PointLight('hearth', new Vector3(ROOMS.drawing.center[0], 1.2, ROOMS.drawing.center[1] - 4), scene);
@@ -906,7 +911,7 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
   const crush = new PostProcess(
     'hmCrush',
     'hmCrush',
-    ['uRes', 'uPixel', 'uLevels', 'uDither', 'uVignette', 'uGrain', 'uTime', 'uHealth', 'uSteward', 'uTint'],
+    ['uRes', 'uPixel', 'uLevels', 'uDither', 'uVignette', 'uGrain', 'uTime', 'uHealth', 'uSteward', 'uTint', 'uBright'],
     null,
     1.0,
     camera,
@@ -917,6 +922,7 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
   let tint: [number, number, number] = WING_TINT.manor;
   let stewardProx = 0;
   let healthFactor = 1;
+  let brightness = 1; // player calibration (Settings slider), 0.7..1.8
   let timeAcc = 0;
   crush.onApply = (effect) => {
     effect.setFloat2('uRes', crush.width || scene.getEngine().getRenderWidth(), crush.height || scene.getEngine().getRenderHeight());
@@ -929,6 +935,7 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
     effect.setFloat('uHealth', healthFactor);
     effect.setFloat('uSteward', stewardProx);
     effect.setFloat3('uTint', tint[0], tint[1], tint[2]);
+    effect.setFloat('uBright', brightness);
   };
 
   let activeRoom: RoomId = 'hall';
@@ -1033,12 +1040,18 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
       levels = l;
       dither = d;
     },
+    setBrightness(v) {
+      brightness = v < 0.6 ? 0.6 : v > 2 ? 2 : v;
+    },
     toggleFlashlight() {
       flashOn = !flashOn;
       return flashOn;
     },
     setFlashlight(on) {
       flashOn = on;
+    },
+    setFlashlightHealth(frac) {
+      flashHealth = frac < 0 ? 0 : frac > 1 ? 1 : frac;
     },
     flashlightOn() {
       return flashOn;
@@ -1048,8 +1061,19 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
       // lantern rides with the player (first-person: a faint held glow) + flicker
       lantern.position.set(lanternTarget.x, 1.6, lanternTarget.z);
       lantern.intensity = 0.26 + Math.sin(timeAcc * 11) * 0.04 + Math.sin(timeAcc * 23) * 0.02;
-      // flashlight: alive when on (tiny flicker), dark when off
-      flashlight.intensity = flashOn ? 4.2 + Math.sin(timeAcc * 34) * 0.22 + Math.sin(timeAcc * 71) * 0.12 : 0;
+      // flashlight: alive when on (tiny flicker), dark when off. As the cell
+      // dies (flashHealth low) it dims and stutters — a visible low-battery warning.
+      if (flashOn) {
+        let b = 4.2 + Math.sin(timeAcc * 34) * 0.22 + Math.sin(timeAcc * 71) * 0.12;
+        if (flashHealth < 0.28) {
+          const fail = flashHealth / 0.28; // 1 → 0 as it drains
+          b *= 0.45 + 0.55 * fail;
+          if (Math.sin(timeAcc * 47) + Math.sin(timeAcc * 17.3) > 0.6 + fail) b *= 0.12; // brown-out stutters
+        }
+        flashlight.intensity = b;
+      } else {
+        flashlight.intensity = 0;
+      }
       hearth.intensity = rooms[activeRoom].def.wing === 'save' ? 1.1 + Math.sin(timeAcc * 9) * 0.18 : 0;
     },
     dispose() {

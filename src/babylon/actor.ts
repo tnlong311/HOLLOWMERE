@@ -28,6 +28,7 @@ export interface PlayerActor {
   readonly moving: boolean;
   teleport(world: GameWorldObjects, roomId: RoomId, lx: number, lz: number, faceYaw: number): void;
   update(ctx: ActorMoveContext): void;
+  addShake(amount: number): void; // impulse the view-shake (a hit landed)
   dispose(): void;
 }
 
@@ -46,6 +47,8 @@ export function createPlayerActor(scene: Scene): PlayerActor {
   let prevDY = 0;
   let dragging = false;
   let bobT = 0;
+  let shake = 0; // decaying view-shake magnitude (spiked by addShake on hits)
+  let shakeT = 0;
 
   return {
     node,
@@ -114,11 +117,23 @@ export function createPlayerActor(scene: Scene): PlayerActor {
       }
       world.clampToRoom(roomId, node.position);
 
-      // ── drive the camera (eye + head-bob + stair climb) ──
+      // ── drive the camera (eye + head-bob + stair climb + hit-shake) ──
       const bob = moving ? Math.sin(bobT) * 0.045 : 0;
       const stairY = world.stairEyeOffset(roomId, node.position);
-      camera.position.set(node.position.x, TUNING.eyeHeight + bob + stairY, node.position.z);
-      camera.rotation.set(pitch, yaw, 0);
+      // view-shake: fast decaying jitter on the eye + a roll kick when hit
+      let shX = 0, shY = 0, shRoll = 0;
+      if (shake > 0.001) {
+        shakeT += deltaSeconds * 42;
+        shake = Math.max(0, shake - deltaSeconds * 2.6);
+        shX = Math.sin(shakeT * 1.7) * shake * 0.06;
+        shY = Math.sin(shakeT * 2.3) * shake * 0.05;
+        shRoll = Math.sin(shakeT) * shake * 0.05;
+      }
+      camera.position.set(node.position.x + shX, TUNING.eyeHeight + bob + stairY + shY, node.position.z);
+      camera.rotation.set(pitch, yaw, shRoll);
+    },
+    addShake(amount) {
+      shake = Math.min(1.4, shake + amount);
     },
     dispose() {
       node.dispose(false, true);

@@ -37,7 +37,10 @@ export interface GameStoreSnapshot {
   readonly trueEnding: boolean; // reached the Lighthouse / Founder finale
   readonly loadProgress: number; // 0..1 asset preload progress (drives loading screen)
   readonly stewardNear: number; // 0..1 proximity (drives leitmotif/CA)
+  readonly hitFlash: number; // 0..1 damage-feedback flash (decays)
+  readonly hitDir: number; // screen-relative yaw of the incoming hit (for directional vignette)
   readonly inventory: readonly InvSlot[];
+  readonly inventoryOpen: boolean; // full categorized inventory screen is open (game paused)
   readonly transition: number; // 0..1 door-curtain blackout
   readonly transitionName: string;
   readonly pointerLocked: boolean;
@@ -69,7 +72,10 @@ const initial: GameStoreSnapshot = {
   trueEnding: false,
   loadProgress: 0,
   stewardNear: 0,
+  hitFlash: 0,
+  hitDir: 0,
   inventory: [],
+  inventoryOpen: false,
   transition: 0,
   transitionName: '',
   pointerLocked: false,

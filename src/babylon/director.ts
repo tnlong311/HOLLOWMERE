@@ -127,6 +127,12 @@ export function createDirector(deps: DirectorDeps): Director {
   let stewardProx = 0;
   let stewardRelocTimer = 0;
   let stalkTimer = 14; // persistent-hunt clock: the Steward tracks you down room-to-room
+  let inventoryOpen = false; // full inventory screen (pauses play while open)
+  let dmgFlash = 0; // 0..1 damage-feedback flash (decays)
+  let dmgAngle = 0; // screen-relative yaw of the last incoming hit
+  let stepStalkT = 0; // cadence timer for the Steward's proximity footsteps
+  let cineT = 0; // intro-cutscene camera clock (drives the establishing fly-through)
+  let cineAudioStarted = false;
   let devMove: { x: number; y: number } | null = null;
   let started = false;
 
@@ -142,7 +148,7 @@ export function createDirector(deps: DirectorDeps): Director {
     const inv: InvSlot[] = [];
     // Always-carried tool: the flashlight. `equipped` mirrors on/off so the HUD
     // slot lights up amber while the beam is live.
-    inv.push({ key: 'flashlight', label: 'Torch', count: 1, kind: 'tool', equipped: world.flashlightOn() });
+    inv.push({ key: 'flashlight', label: 'Flashlight', count: 1, kind: 'tool', equipped: world.flashlightOn() });
     inv.push({ key: 'dagger', label: 'Dagger', count: 1, kind: 'weapon', equipped: weapon === 'dagger' });
     if (hasPistol) inv.push({ key: 'pistol', label: 'Pistol', count: ammo, kind: 'weapon', equipped: weapon === 'pistol' });
     if (hasRifle) inv.push({ key: 'rifle', label: 'Rifle', count: rifleAmmo, kind: 'weapon', equipped: weapon === 'rifle' });
@@ -182,7 +188,10 @@ export function createDirector(deps: DirectorDeps): Director {
       crestSeated: crestsSeated > 0,
       trueEnding,
       stewardNear: stewardProx,
+      hitFlash: dmgFlash,
+      hitDir: dmgAngle,
       inventory: buildInventory(),
+      inventoryOpen,
       transition: transitionActive ? Math.sin(Math.min(1, transT) * Math.PI) : 0,
       transitionName: transitionActive ? ROOMS[transTo].name : '',
       pointerLocked: controls.isPointerLocked(),
@@ -274,6 +283,41 @@ export function createDirector(deps: DirectorDeps): Director {
     } else {
       audio.play('ui');
       toast(`${it.label}${it.kind === 'key' ? ' (key item)' : ''}`);
+    }
+  };
+
+  // Clicked from the inventory UI (game paused): equip a weapon, toggle the
+  // flashlight, or USE a consumable (bandage → instant heal, unlike the timed
+  // in-combat bind on [B]).
+  const applyInvAction = (a: { kind: 'equip' | 'use'; key: string }) => {
+    if (a.kind === 'equip') {
+      if (a.key === 'flashlight') {
+        toggleFlashlight();
+        return;
+      }
+      const ok =
+        a.key === 'dagger' ||
+        (a.key === 'pistol' && hasPistol) ||
+        (a.key === 'rifle' && hasRifle) ||
+        (a.key === 'cannon' && hasCannon) ||
+        (a.key === 'flare' && hasFlare);
+      if (ok) {
+        weapon = a.key as Weapon;
+        audio.play('ui');
+        toast(`Equipped: ${weaponLabel()}`);
+      }
+    } else if (a.kind === 'use' && a.key === 'bandage') {
+      if (bandages <= 0) {
+        toast('No bandages.');
+        audio.play('puzzleBad');
+      } else if (hp >= TUNING.playerMaxHp) {
+        toast('No wound to bind.');
+      } else {
+        bandages -= 1;
+        hp = Math.min(TUNING.playerMaxHp, hp + TUNING.bindHeal);
+        audio.play('save');
+        toast(`Wound bound. (Bandage -1)`);
+      }
     }
   };
 
@@ -839,9 +883,39 @@ export function createDirector(deps: DirectorDeps): Director {
   };
 
   const tick = (dt: number) => {
+    world.setBrightness(controls.getBrightness()); // apply the Settings brightness every frame
     if (phase === 'TITLE') {
       const i = controls.consume();
-      if (i.use || i.attack) startGame();
+      if (i.use || i.attack) {
+        startGame();
+        return;
+      }
+      // ── intro cinematic: a slow, live camera fly-through of the Great Hall,
+      // creeping from the flooded entrance toward the dark staircase. Rendered
+      // real-time behind the story text — the game's "video" cutscene. ──
+      cineT += dt;
+      if (!cineAudioStarted) {
+        cineAudioStarted = true;
+        audio.ambience('explore'); // begins once the browser unlocks audio (first click)
+      }
+      const x = Math.min(1, cineT / 34);
+      const p = x * x * (3 - 2 * x); // smoothstep ease
+      // waypoints: A = wide, high, at the entrance · B = pushed in, tilted up the stairs
+      const ax = 5.5, ay = 2.8, az = 8.5, atx = -1, aty = 1.4, atz = 0;
+      const bx = -2.5, by = 1.8, bz = -1.5, btx = -4, bty = 2.8, btz = -8.5;
+      const swX = Math.sin(cineT * 0.3) * 0.22;
+      const swY = Math.sin(cineT * 0.23) * 0.12;
+      const px = ax + (bx - ax) * p + swX;
+      const py = ay + (by - ay) * p + swY;
+      const pz = az + (bz - az) * p;
+      const tx = atx + (btx - atx) * p;
+      const ty = aty + (bty - aty) * p;
+      const tz = atz + (btz - atz) * p;
+      const dx = tx - px, dy = ty - py, dz = tz - pz;
+      const cam = world.camera;
+      cam.position.set(px, py, pz);
+      cam.rotation.set(-Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(dx, dz), 0);
+      world.update(dt, cam.position); // flashlight/lantern follow + flicker (no store write)
       return;
     }
     if (phase === 'DEAD' || phase === 'WIN') {
@@ -888,6 +962,13 @@ export function createDirector(deps: DirectorDeps): Director {
     }
 
     const intents = controls.consume();
+    // inventory screen: toggle with [I]/[Tab]; pauses play (movement + enemies) while open
+    if (intents.inventory) inventoryOpen = !inventoryOpen;
+    if (inventoryOpen) {
+      if (intents.invAction) applyInvAction(intents.invAction);
+      pushStore();
+      return;
+    }
     const frozen = phase !== 'PLAY';
 
     // ── wound-binding: rooted + vulnerable while the bandage goes on ──
@@ -931,6 +1012,7 @@ export function createDirector(deps: DirectorDeps): Director {
         audio.play('puzzleBad');
       }
     }
+    world.setFlashlightHealth(battery / TUNING.batteryMax); // dying-cell flicker warning
     if (bindT > 0) {
       bindT -= dt;
       if (bindT <= 0) {
@@ -976,6 +1058,22 @@ export function createDirector(deps: DirectorDeps): Director {
       hp -= et.burstDamage;
       if (et.weeperSpat) audio.play('weeperSpit');
     }
+    // ── damage feedback: directional vignette + view-shake ──
+    const tookHit = et.contactDamage > 0 || et.burstDamage > 0;
+    if (tookHit) {
+      const a = entities.hitFromAngle(actor.position, room);
+      if (a !== null) dmgAngle = a - actor.facingYaw;
+      if (et.burstDamage > 0) {
+        // discrete hit → a sharp jolt + strong flash
+        dmgFlash = Math.min(1, dmgFlash + 0.85);
+        actor.addShake(0.55 + Math.min(0.6, et.burstDamage * 0.03));
+      } else {
+        // continuous contact (grab / spore aura) → steady red glow, NO per-frame
+        // shake (that made the view jitter endlessly = "can't stand still")
+        dmgFlash = Math.min(0.55, dmgFlash + dt * 2.2);
+      }
+    }
+    dmgFlash = Math.max(0, dmgFlash - dt * 2.4);
     // boss music while the Bloom is alive + you're in its arena
     if (et.bossActive && !bloomActivatedAmbience) {
       bloomActivatedAmbience = true;
@@ -986,6 +1084,14 @@ export function createDirector(deps: DirectorDeps): Director {
     stewardProx = et.stewardProx;
     world.setStewardProximity(stewardProx);
     if (stewardActivated && stewardProx > 0.45) audio.ambience('steward');
+    // A3: you HEAR the Steward hunting — footfalls quicken as it closes in
+    if (stewardActivated && entities.stewardActive() && stewardProx > 0.06) {
+      stepStalkT -= dt;
+      if (stepStalkT <= 0) {
+        audio.play('stewardStep');
+        stepStalkT = 1.15 - stewardProx * 0.8; // ~1.1s far → ~0.35s right behind you
+      }
+    }
 
     // steward follows through doors
     if (stewardRelocTimer > 0) {

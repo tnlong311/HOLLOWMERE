@@ -4,7 +4,7 @@
 // downable pursuer). Enemies act only in the active room.
 // ══════════════════════════════════════════════
 
-import { AnimationGroup, Color3, MeshBuilder, Scene, TransformNode, Vector3 } from '@babylonjs/core';
+import { AnimationGroup, Color3, Mesh, MeshBuilder, Scene, StandardMaterial, TransformNode, Vector3 } from '@babylonjs/core';
 import { createStandardMaterial, loadGlbModel } from './helpers';
 import { ASSET_KEYS, TUNING, type RoomId } from './config';
 import { ASSETS } from '../assets';
@@ -37,6 +37,12 @@ interface Enemy {
   nodesLeft: number; // Bloom heart-nodes remaining
   nodeHp: number; // hp of the current Bloom node
   nodes: TransformNode[]; // Bloom heart-node meshes
+  aura?: Mesh; // boss: visible floor ring marking its damaging spore radius
+  proj?: Mesh; // boss: visible spore projectile launched on a ranged lob
+  projT: number; // 0 = idle; >0..1 = projectile in flight
+  ptx: number; // projectile target (player pos captured at launch)
+  pty: number;
+  ptz: number;
   walk?: AnimationGroup;
   idle?: AnimationGroup;
   current?: AnimationGroup;
@@ -65,6 +71,8 @@ export interface SceneEntities {
   stewardRoom(): RoomId | null; // current room of the roaming Steward (null if idle/down)
   aliveCount(roomId: RoomId): number;
   bossAlive(): boolean;
+  hitFromAngle(playerPos: Vector3, roomId: RoomId): number | null; // world yaw to nearest threat
+
   exposeLeviathan(): void;
   dispose(): void;
 }
@@ -219,6 +227,37 @@ export function createSceneEntities(scene: Scene): SceneEntities {
         }
         e.nodes.push(nodeRoot);
       }
+      // Visible DANGER RING on the floor — marks the spore-aura radius so the
+      // player can read (and stay out of) the damage zone. Self-lit so it glows
+      // in the dark. Positioned onto the boss each frame in update().
+      const auraR = e.kind === 'leviathan' ? 11 : 9;
+      const auraMat = createStandardMaterial(scene, `bloom-aura-${idx}`, new Color3(0.3, 0.85, 0.35), new Color3(0.22, 0.7, 0.28));
+      auraMat.alpha = 0.5;
+      auraMat.disableLighting = true;
+      const aura = MeshBuilder.CreateTorus(`bloom-aura-${idx}`, { diameter: auraR * 2, thickness: 0.55, tessellation: 48 }, scene);
+      aura.material = auraMat;
+      aura.rotation.x = Math.PI / 2;
+      aura.isPickable = false;
+      aura.setEnabled(false);
+      e.aura = aura;
+      // Visible spore PROJECTILE for the ranged lob (glowing green ball in flight).
+      const projMat = createStandardMaterial(scene, `bloom-proj-${idx}`, new Color3(0.55, 1, 0.4), new Color3(0.45, 0.95, 0.3));
+      projMat.disableLighting = true;
+      const proj = MeshBuilder.CreateSphere(`bloom-proj-${idx}`, { diameter: 0.85, segments: 10 }, scene);
+      proj.material = projMat;
+      proj.isPickable = false;
+      proj.setEnabled(false);
+      e.proj = proj;
+    }
+    // Weeper gets a visible acid ball too (smaller, sickly yellow-green)
+    if (e.kind === 'weeper') {
+      const projMat = createStandardMaterial(scene, `weeper-proj-${idx}`, new Color3(0.72, 0.95, 0.28), new Color3(0.6, 0.85, 0.2));
+      projMat.disableLighting = true;
+      const proj = MeshBuilder.CreateSphere(`weeper-proj-${idx}`, { diameter: 0.42, segments: 8 }, scene);
+      proj.material = projMat;
+      proj.isPickable = false;
+      proj.setEnabled(false);
+      e.proj = proj;
     }
   };
 
@@ -248,6 +287,10 @@ export function createSceneEntities(scene: Scene): SceneEntities {
       nodesLeft: isBoss(kind) ? bossNodes(kind) : 0,
       nodeHp: bossNodeHp(kind),
       nodes: [],
+      projT: 0,
+      ptx: 0,
+      pty: 0,
+      ptz: 0,
     };
     enemies.push(e);
     makeEnemyVisual(root, e);
@@ -276,6 +319,8 @@ export function createSceneEntities(scene: Scene): SceneEntities {
       const on = enabledFor(e);
       if (on && world && !e.placed) placeInRoom(e, world);
       e.root.setEnabled(on);
+      if (e.aura) e.aura.setEnabled(on); // danger ring only while the boss is live in-room
+      if (e.proj && !on) e.proj.setEnabled(false);
     }
   };
 
@@ -408,6 +453,23 @@ export function createSceneEntities(scene: Scene): SceneEntities {
         if (!e.placed) placeInRoom(e, world);
         if (!e.root.isEnabled()) e.root.setEnabled(true);
 
+        // shared: animate any in-flight projectile (Bloom spore lob / Weeper acid)
+        if (e.proj && e.projT > 0) {
+          e.projT += dt * 2.2; // ~0.45s flight
+          if (e.projT >= 1) {
+            e.projT = 0;
+            e.proj.setEnabled(false);
+          } else {
+            const p = e.projT;
+            const sx = e.root.position.x;
+            const sy = e.root.position.y + 1.3;
+            const sz = e.root.position.z;
+            e.proj.position.set(sx + (e.ptx - sx) * p, sy + (e.pty - sy) * p + Math.sin(p * Math.PI) * 1.2, sz + (e.ptz - sz) * p);
+            const sc = 1 + Math.sin(animT * 28) * 0.18;
+            e.proj.scaling.setAll(sc);
+          }
+        }
+
         if (e.kind === 'sallowed') {
           if (e.state === 'corpse') {
             e.ripen -= dt;
@@ -503,6 +565,15 @@ export function createSceneEntities(scene: Scene): SceneEntities {
             if (e.spitT <= 0) {
               result.burstDamage += TUNING.weeperSpitDamage;
               result.weeperSpat = true;
+              // spit a visible acid ball at the player's current position
+              if (e.proj) {
+                e.projT = 0.001;
+                e.ptx = playerPos.x;
+                e.pty = 1.2;
+                e.ptz = playerPos.z;
+                e.proj.setEnabled(true);
+                e.proj.position.set(e.root.position.x, e.root.position.y + 1.3, e.root.position.z);
+              }
               if (e.pat > 0) {
                 e.pat -= 1;
                 e.spitT = 0.24; // rapid volley shot
@@ -533,6 +604,21 @@ export function createSceneEntities(scene: Scene): SceneEntities {
           e.root.rotation.y = Math.atan2(dx / (dist || 1), dz / (dist || 1));
           const auraR = e.kind === 'leviathan' ? 11 : 9;
           if (dist < auraR) result.contactDamage += TUNING.bloomSporeDamage * (1 - dist / auraR);
+          // visible danger ring: sits on the boss, breathes green, and flares RED
+          // the instant an attack winds up — so the range and the tell both read.
+          if (e.aura) {
+            e.aura.setEnabled(true);
+            e.aura.position.set(e.root.position.x, 0.08, e.root.position.z);
+            const am = e.aura.material as StandardMaterial;
+            const winding = e.atkPhase === 1 && e.attackT < (e.pat === 1 ? 0.75 : 0.55);
+            if (winding) {
+              am.emissiveColor.set(0.95, 0.2, 0.13);
+              am.alpha = 0.8;
+            } else {
+              am.emissiveColor.set(0.22, 0.7, 0.28);
+              am.alpha = 0.42 + Math.sin(animT * 3) * 0.08;
+            }
+          }
           const lobDmg = e.kind === 'leviathan' ? 11 : e.kind === 'steward_final' ? 12 : e.kind === 'founder' ? 12 : 7;
           if (e.atkPhase === 0) {
             e.atkCd = Math.max(0, e.atkCd - dt);
@@ -559,8 +645,20 @@ export function createSceneEntities(scene: Scene): SceneEntities {
               e.root.rotation.x = 0.35 * Math.sin(s * Math.PI); // lurch forward
               if (!e.struck) {
                 e.struck = true;
-                if (e.pat === 1 && dist < 7) result.burstDamage += Math.round(lobDmg * 1.6);
-                else if (dist < 16) result.burstDamage += lobDmg;
+                if (e.pat === 1 && dist < 7) {
+                  result.burstDamage += Math.round(lobDmg * 1.6); // slam (close)
+                } else if (dist < 16) {
+                  result.burstDamage += lobDmg; // lob (ranged)
+                  // hurl a visible spore ball toward where the player stood
+                  if (e.proj) {
+                    e.projT = 0.001;
+                    e.ptx = playerPos.x;
+                    e.pty = 1.2;
+                    e.ptz = playerPos.z;
+                    e.proj.setEnabled(true);
+                    e.proj.position.set(e.root.position.x, e.root.position.y + 1.4, e.root.position.z);
+                  }
+                }
                 result.weeperSpat = true;
               }
             }
@@ -639,6 +737,8 @@ export function createSceneEntities(scene: Scene): SceneEntities {
           if (best.nodesLeft <= 0) {
             best.state = 'gone';
             best.root.setEnabled(false);
+            if (best.aura) best.aura.setEnabled(false);
+            if (best.proj) best.proj.setEnabled(false);
             return 'boss-down';
           }
           return 'boss-node';
@@ -703,6 +803,24 @@ export function createSceneEntities(scene: Scene): SceneEntities {
     },
     bossAlive() {
       return bloom.state !== 'gone' || leviathan.state !== 'gone' || stewardFinal.state !== 'gone' || founder.state !== 'gone';
+    },
+    hitFromAngle(playerPos, roomId) {
+      // world yaw from the player to the nearest live threat in this room (for the
+      // directional damage vignette). null if nothing is present.
+      let best: Enemy | undefined;
+      let bestD = Infinity;
+      for (const e of enemies) {
+        if (e.roomId !== roomId || e.state === 'gone' || (e.kind === 'steward' && e.state === 'idle')) continue;
+        const dx = e.root.position.x - playerPos.x;
+        const dz = e.root.position.z - playerPos.z;
+        const d = dx * dx + dz * dz;
+        if (d < bestD) {
+          bestD = d;
+          best = e;
+        }
+      }
+      if (!best) return null;
+      return Math.atan2(best.root.position.x - playerPos.x, best.root.position.z - playerPos.z);
     },
     exposeLeviathan() {
       leviathan.dropped = true;
