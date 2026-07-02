@@ -40,6 +40,7 @@ export const ASSETS: Record<string, string> = {
   "crystal_chandelier_broken": new URL("./assets/models/prop_crystal-chandelier-broken_478ba1.glb", import.meta.url).href,
   "grandfather_clock": new URL("./assets/models/prop_grandfather-clock_c34526.glb", import.meta.url).href,
   "hunt_tapestry": new URL("./assets/models/prop_hunt-tapestry_35d198.glb", import.meta.url).href,
+  "intro_cinematic": new URL("./assets/video/video_intro-cinematic_9a5b67.mp4", import.meta.url).href,
   "iron_chandelier": new URL("./assets/models/prop_iron-chandelier_2e9fa6.glb", import.meta.url).href,
   "item_bluecap": new URL("./assets/models/prop_item-bluecap_af7c81.glb", import.meta.url).href,
   "item_brass_key": new URL("./assets/models/prop_item-brass-key_436cdb.glb", import.meta.url).href,

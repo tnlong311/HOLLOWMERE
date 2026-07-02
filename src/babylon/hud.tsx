@@ -18,6 +18,7 @@ const INK = '#e9dcc3';
 const AMBER = '#d9a441';
 const titleImg = ASSETS['ui_title'];
 const crestImg = ASSETS['ui_crest_icons'];
+const introVideo = ASSETS['intro_cinematic'];
 
 export function Hud({ phaseRef }: HudProps) {
   const [s, setS] = useState<GameStoreSnapshot>(() => getGameSnapshot());
@@ -360,6 +361,31 @@ function IntroCutscene({ ready, loadProgress }: { ready: boolean; loadProgress: 
   const pct = Math.round(loadProgress * 100);
   return (
     <div style={cutsceneStyle} onClick={!last ? advance : undefined}>
+      {/* video-form intro: the generated causeway approach loops behind the story.
+          autoPlay usually suffices (muted); the ref-callback retry covers strict
+          autoplay policies by unlocking on the first pointer press. */}
+      {introVideo ? (
+        <video
+          src={introVideo}
+          autoPlay
+          muted
+          loop
+          playsInline
+          style={cutsceneVideoStyle}
+          ref={(v) => {
+            if (!v) return;
+            void v.play().catch(() => {
+              const kick = () => {
+                void v.play().catch(() => undefined);
+                window.removeEventListener('pointerdown', kick);
+              };
+              window.addEventListener('pointerdown', kick);
+            });
+          }}
+        />
+      ) : null}
+      <div style={cutsceneShadeStyle} />
+      <div style={cutsceneContentStyle}>
       {i === 0 && titleImg ? <img src={titleImg} alt="HOLLOWMERE" style={{ ...titleArtStyle, marginBottom: 8 }} /> : null}
       {slide.title && !(i === 0 && titleImg) ? <h1 style={{ letterSpacing: 8, color: INK, margin: 0 }}>{slide.title}</h1> : null}
       <p key={i} style={cutsceneTextStyle}>{slide.text}</p>
@@ -398,6 +424,7 @@ function IntroCutscene({ ready, loadProgress }: { ready: boolean; loadProgress: 
           <p style={{ color: INK, opacity: 0.5, fontSize: '0.72rem', margin: 0 }}>{pct}%</p>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -435,5 +462,8 @@ const titleScreenStyle: CSSProperties = { position: 'absolute', inset: 0, displa
 const titleArtStyle: CSSProperties = { maxWidth: 'min(80vw, 460px)', imageRendering: 'pixelated', filter: 'drop-shadow(0 4px 16px #000)' };
 const cutsceneStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, background: 'radial-gradient(circle at 50% 38%, rgba(18,14,10,0.72), rgba(2,2,3,0.97))', fontFamily: fontStack, pointerEvents: 'auto', cursor: 'pointer', padding: '24px 32px', textAlign: 'center', userSelect: 'none' };
 const cutsceneTextStyle: CSSProperties = { color: INK, opacity: 0.88, maxWidth: 520, fontSize: '1.02rem', lineHeight: 1.75, marginTop: 18, minHeight: 96, textShadow: '0 1px 3px #000' };
+const cutsceneVideoStyle: CSSProperties = { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 };
+const cutsceneShadeStyle: CSSProperties = { position: 'absolute', inset: 0, zIndex: 1, background: 'radial-gradient(circle at 50% 42%, rgba(4,3,3,0.35), rgba(2,2,3,0.88))' };
+const cutsceneContentStyle: CSSProperties = { position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' };
 const beginBtnStyle: CSSProperties = { marginTop: 16, padding: '10px 26px', background: 'transparent', color: AMBER, border: `1px solid ${AMBER}`, borderRadius: 4, fontFamily: fontStack, fontSize: '1rem', letterSpacing: 2, cursor: 'pointer', pointerEvents: 'auto' };
 const endStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, background: 'rgba(2,2,3,0.9)', fontFamily: fontStack, pointerEvents: 'auto', padding: 24, textAlign: 'center' };
