@@ -1,0 +1,51 @@
+{
+  "key": "prop_bone_key",
+  "kind": "prop",
+  "provider": "seed3d",
+  "model": "doubao-seed3d-2-0-260328",
+  "prompt": null,
+  "negative": null,
+  "seed": null,
+  "face_limit": 2500,
+  "face_count": null,
+  "file_size_bytes": 11594376,
+  "optimization": {
+    "applied": true,
+    "before_bytes": 24856376,
+    "after_bytes": 11594376,
+    "texture_size": 512,
+    "texture_format": "webp",
+    "quantize": true
+  },
+  "texture": true,
+  "pbr": true,
+  "rigged": false,
+  "rig_type": null,
+  "t_pose": false,
+  "animations": [],
+  "stage_history": [
+    {
+      "stage": "image_to_model",
+      "task_id": "cgt-20260630193508-wq475",
+      "status": "success"
+    }
+  ],
+  "mesh_task_id": "cgt-20260630193508-wq475",
+  "final_task_id": "cgt-20260630193508-wq475",
+  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "original_prompt": null,
+  "effective_prompt": null,
+  "prompt_was_rewritten": false,
+  "original_negative": null,
+  "effective_negative": null,
+  "input_mode": "image_to_model",
+  "image_hash": "01ddbebdc248f7b6",
+  "image_url": null,
+  "multiview_hash": null,
+  "multiview_views": null,
+  "image_type": null,
+  "auto_reference": {
+    "used": false
+  },
+  "generated_at": "2026-06-30T11:38:51.474Z"
+}

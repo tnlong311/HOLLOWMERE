@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# build output (regenerated via `bun run build`)
+dist/
+
+# cloudflare / deploy temp
+.wrangler/
+
+# backups & archives
+*.zip
+
+# os / editor
+.DS_Store
+*.log

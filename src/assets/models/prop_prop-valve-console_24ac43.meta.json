@@ -1,0 +1,51 @@
+{
+  "key": "prop_valve_console",
+  "kind": "prop",
+  "provider": "seed3d",
+  "model": "doubao-seed3d-2-0-260328",
+  "prompt": null,
+  "negative": null,
+  "seed": null,
+  "face_limit": 6000,
+  "face_count": null,
+  "file_size_bytes": 13075920,
+  "optimization": {
+    "applied": true,
+    "before_bytes": 35610420,
+    "after_bytes": 13075920,
+    "texture_size": 512,
+    "texture_format": "webp",
+    "quantize": true
+  },
+  "texture": true,
+  "pbr": true,
+  "rigged": false,
+  "rig_type": null,
+  "t_pose": false,
+  "animations": [],
+  "stage_history": [
+    {
+      "stage": "image_to_model",
+      "task_id": "cgt-20260630190756-x45n2",
+      "status": "success"
+    }
+  ],
+  "mesh_task_id": "cgt-20260630190756-x45n2",
+  "final_task_id": "cgt-20260630190756-x45n2",
+  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "original_prompt": null,
+  "effective_prompt": null,
+  "prompt_was_rewritten": false,
+  "original_negative": null,
+  "effective_negative": null,
+  "input_mode": "image_to_model",
+  "image_hash": "c3cb3da947cf435e",
+  "image_url": null,
+  "multiview_hash": null,
+  "multiview_views": null,
+  "image_type": null,
+  "auto_reference": {
+    "used": false
+  },
+  "generated_at": "2026-06-30T11:14:30.398Z"
+}

@@ -1,0 +1,62 @@
+{
+  "key": "char_bloom",
+  "kind": "character",
+  "provider": "seed3d",
+  "model": "doubao-seed3d-2-0-260328",
+  "prompt": null,
+  "negative": null,
+  "seed": null,
+  "face_limit": 12000,
+  "face_count": null,
+  "file_size_bytes": 14112160,
+  "optimization": {
+    "applied": true,
+    "before_bytes": 37973196,
+    "after_bytes": 14112160,
+    "texture_size": 512,
+    "texture_format": "webp",
+    "quantize": true
+  },
+  "texture": true,
+  "pbr": true,
+  "rigged": false,
+  "rig_type": null,
+  "t_pose": false,
+  "animations": [],
+  "stage_history": [
+    {
+      "stage": "image_to_model",
+      "task_id": "cgt-20260630175846-5nhx5",
+      "status": "success"
+    },
+    {
+      "stage": "rig",
+      "status": "unsupported",
+      "reason": "Seed3D has no built-in auto-rig or animation pipeline; falling back to static mesh. For a rigged + animated character, re-run with --provider tripo.",
+      "requestedRig": true,
+      "requestedAnimations": [
+        "idle",
+        "walk",
+        "run"
+      ]
+    }
+  ],
+  "mesh_task_id": "cgt-20260630175846-5nhx5",
+  "final_task_id": "cgt-20260630175846-5nhx5",
+  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "original_prompt": null,
+  "effective_prompt": null,
+  "prompt_was_rewritten": false,
+  "original_negative": null,
+  "effective_negative": null,
+  "input_mode": "image_to_model",
+  "image_hash": "339a3f9d49b2c8f5",
+  "image_url": null,
+  "multiview_hash": null,
+  "multiview_views": null,
+  "image_type": null,
+  "auto_reference": {
+    "used": false
+  },
+  "generated_at": "2026-06-30T10:04:58.249Z"
+}
