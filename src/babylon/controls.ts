@@ -17,14 +17,19 @@ interface Intents {
   bind: boolean; // edge: bind a wound (heal, if a bandage is carried)
   inventory: boolean; // edge: toggle the full inventory screen
   invAction: { kind: 'equip' | 'use'; key: string } | null; // click action from the inventory UI
+  crouch: boolean; // edge: toggle sneak (slow, quiet, near-invisible in the dark)
+  dodge: boolean; // edge: stamina-costing dodge-step with brief invulnerability
 }
 
-const intents: Intents = { use: false, attack: false, swap: false, quickTurn: false, attackHeld: false, slot: 0, flashlight: false, sprintHeld: false, bind: false, inventory: false, invAction: null };
+const intents: Intents = { use: false, attack: false, swap: false, quickTurn: false, attackHeld: false, slot: 0, flashlight: false, sprintHeld: false, bind: false, inventory: false, invAction: null, crouch: false, dodge: false };
 
 // persisted player settings (Settings panel)
 const settings = {
   brightness: (() => {
     try { const v = Number(localStorage.getItem('hm_brightness')); return v >= 0.6 && v <= 2 ? v : 1; } catch { return 1; }
+  })(),
+  crt: (() => {
+    try { return localStorage.getItem('hm_crt') === '1'; } catch { return false; }
   })(),
 };
 
@@ -64,6 +69,12 @@ export const controls = {
   pressInvAction(kind: 'equip' | 'use', key: string) {
     intents.invAction = { kind, key };
   },
+  pressCrouch() {
+    intents.crouch = true;
+  },
+  pressDodge() {
+    intents.dodge = true;
+  },
   setSprint(on: boolean) {
     intents.sprintHeld = on;
   },
@@ -73,6 +84,13 @@ export const controls = {
   },
   getBrightness() {
     return settings.brightness;
+  },
+  setCrt(on: boolean) {
+    settings.crt = on;
+    try { localStorage.setItem('hm_crt', on ? '1' : '0'); } catch { /* private mode */ }
+  },
+  getCrt() {
+    return settings.crt;
   },
   consume(): Intents {
     const snap = { ...intents };
@@ -85,6 +103,8 @@ export const controls = {
     intents.bind = false;
     intents.inventory = false;
     intents.invAction = null;
+    intents.crouch = false;
+    intents.dodge = false;
     return snap;
   },
   peekAttackHeld() {
@@ -155,9 +175,12 @@ export function attachKeyboard(): () => void {
       case 'Enter':
         controls.pressUse();
         break;
-      case 'Space':
       case 'KeyF':
         controls.pressAttack();
+        break;
+      case 'Space':
+        e.preventDefault();
+        controls.pressDodge();
         break;
       case 'KeyQ':
         controls.pressSwap();
@@ -176,6 +199,9 @@ export function attachKeyboard(): () => void {
       case 'KeyB':
         controls.pressBind();
         break;
+      case 'KeyC':
+        controls.pressCrouch();
+        break;
       case 'ShiftLeft':
       case 'ShiftRight':
         controls.setSprint(true);
@@ -191,7 +217,7 @@ export function attachKeyboard(): () => void {
   };
   const onUp = (e: KeyboardEvent) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') controls.setSprint(false);
-    if (e.code === 'Space' || e.code === 'KeyF') controls.releaseAttack();
+    if (e.code === 'KeyF') controls.releaseAttack();
   };
   // ── WASD-while-sprinting fix ──────────────────────────────────────
   // @rezona's movement tracks keys by `e.key` (case-sensitive). Holding Shift

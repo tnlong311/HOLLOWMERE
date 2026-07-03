@@ -15,6 +15,7 @@ import type { SceneEntities } from './entities';
 import type { ItemField } from './items';
 import type { GameAudioHandle } from './audio';
 import type { WeaponView } from './viewmodel';
+import { ASSETS } from '../assets';
 
 export interface DirectorDeps {
   world: GameWorldObjects;
@@ -73,6 +74,26 @@ export function createDirector(deps: DirectorDeps): Director {
   let pickPins = 0;
   let pickBoxId = '';
   let pickSpeed = 1;
+  // ── puzzles ──
+  // The Great Clock (Landing): set the hands to the hour from Iseult's diary.
+  let clockHour = 3;
+  let clockSolved = false;
+  // The Vane portraits (Landing): light them with the BEAM in the order he lost
+  // them — wife, son, himself. Aim the flashlight at each in turn.
+  const EYES_ORDER = ['portrait_c', 'portrait_r', 'portrait_l']; // Iseult → Cosmo → the Founder
+  let eyesStep = 0;
+  let eyesSolved = false;
+  let aimTargetIdx = -1; // portrait currently under the beam
+  let aimT = 0;
+  let litLatch = ''; // last portrait registered (must move the beam off to re-light)
+  // The work-song (Music Room piano): learn it from the Steward's ledger, play it back.
+  const SONG: number[] = [1, 3, 0, 2]; // mid → top → low → high
+  let songKnown = false;
+  let songActive = false;
+  let songPointer = 0;
+  let songDir = 1;
+  let songStep = 0;
+  let songSolved = false;
   let ink: number = TUNING.startInk;
   // ── survival systems ──
   let stamina: number = TUNING.staminaMax; // sprint reserve
@@ -142,7 +163,28 @@ export function createDirector(deps: DirectorDeps): Director {
   let stewardProx = 0;
   let stewardRelocTimer = 0;
   let stalkTimer = 14; // persistent-hunt clock: the Steward tracks you down room-to-room
+  let lightningTimer = 14; // storm clock — random flashes through the above-ground rooms
   let inventoryOpen = false; // full inventory screen (pauses play while open)
+  // ── checkpoint: snapshotted at each threshold (room entry). Death offers
+  // "rise at the last threshold" instead of a full restart — fair, not soft. ──
+  let checkpoint: {
+    room: RoomId;
+    entry: [number, number];
+    hp: number;
+    ammo: number;
+    rifleAmmo: number;
+    cannonAmmo: number;
+    flares: number;
+    ink: number;
+    bandages: number;
+    battery: number;
+    lockpicks: number;
+  } | null = null;
+  let crouched = false; // sneak stance: slow + quiet + near-invisible in the dark
+  let dodgeT = 0; // >0 while the dodge-step burst is in flight
+  let dodgeDx = 0; // world-space dodge direction
+  let dodgeDz = 0;
+  let invulnT = 0; // i-frames (dodge) — incoming damage is ignored while > 0
   let dmgFlash = 0; // 0..1 damage-feedback flash (decays)
   let dmgAngle = 0; // screen-relative yaw of the last incoming hit
   let stepStalkT = 0; // cadence timer for the Steward's proximity footsteps
@@ -196,12 +238,17 @@ export function createDirector(deps: DirectorDeps): Director {
       battery: Math.round(battery),
       bandages,
       binding: bindT > 0 ? 1 - bindT / TUNING.bindDuration : 0,
+      sneaking: crouched,
+      checkpointName: checkpoint ? ROOMS[checkpoint.room].name : '',
       lockpicks,
       picking,
       pickAngle,
       pickLo,
       pickHi,
       pickPins,
+      songActive,
+      songPointer,
+      songStep,
       objective,
       prompt: promptText,
       toast: toastText,
@@ -222,6 +269,27 @@ export function createDirector(deps: DirectorDeps): Director {
   const enterRoom = (to: RoomId, entry: [number, number], faceYaw: number) => {
     room = to;
     stairArmed = false; // arriving on/near a stair must not bounce you straight back
+    // PERMANENT CHECKPOINTS ONLY: the Great Hall (the hub) and the Drawing Room
+    // (the hearth / Ledger room). Passing through one marks it; death returns
+    // you THERE — not to whatever door you last used. Mercy floors still apply
+    // (hp ≥ 40, battery ≥ 25) so you're never reborn half-dead in the dark.
+    if (to === 'hall' || to === 'drawing') {
+      const moved = checkpoint?.room !== to;
+      checkpoint = {
+        room: to,
+        entry: [entry[0], entry[1]],
+        hp: Math.max(40, Math.round(hp)),
+        ammo,
+        rifleAmmo,
+        cannonAmmo,
+        flares,
+        ink,
+        bandages,
+        battery: Math.max(25, Math.round(battery)),
+        lockpicks,
+      };
+      if (moved && started) toast(`The house marks your passage. (Checkpoint: ${ROOMS[to].name})`);
+    }
     world.setActiveRoom(to);
     entities.setActiveRoom(to, world);
     items.setActiveRoom(to, world);
@@ -271,6 +339,20 @@ export function createDirector(deps: DirectorDeps): Director {
     items.setActiveRoom('hall', world);
     items.setCrestSockets(crestsSeated);
     actor.teleport(world, 'hall', ROOMS.hall.spawnLocal[0], ROOMS.hall.spawnLocal[1], Math.PI);
+    // initial checkpoint: dying before the first door must still offer a rise
+    checkpoint = {
+      room: 'hall',
+      entry: [ROOMS.hall.spawnLocal[0], ROOMS.hall.spawnLocal[1]],
+      hp: TUNING.playerMaxHp,
+      ammo,
+      rifleAmmo,
+      cannonAmmo,
+      flares,
+      ink,
+      bandages,
+      battery: Math.max(25, Math.round(battery)),
+      lockpicks,
+    };
     audio.unlock();
     audio.ambience('explore');
     objective = 'Seek the Drawing Room (west). Save, and take the Brass Key.';
@@ -436,7 +518,7 @@ export function createDirector(deps: DirectorDeps): Director {
         toast("Iseult's Locket — a portrait of her and Cosmo inside. It fits a wall-safe somewhere below.");
         break;
       case 'note_iseult':
-        toast("Iseult's diary: “Father seals the lamp-room. He says the water is owed a daughter, and the ledger must balance.”");
+        toast("Iseult's diary: “Father seals the lamp-room… and he stopped the great clock at SEVEN — the hour the tide took her. He hangs our portraits in the order he lost us: wife, then son, then himself.”");
         break;
       // ── The Sister's Room (Ysolde / Marion subplot) ──
       case 'marion_photo':
@@ -448,7 +530,8 @@ export function createDirector(deps: DirectorDeps): Director {
         toast("The Steward's keepsake — worn smooth by handling. Carrying it, you might yet stay his hand.");
         break;
       case 'steward_ledger':
-        toast("The Steward's ledger & work-song: every task, every grave, ruled in the same tidy hand. He was a gardener once.");
+        songKnown = true;
+        toast("The Steward's ledger & work-song: every grave ruled in the same tidy hand. You memorise the tune — MID, TOP, LOW, HIGH. (A piano could play it.)");
         break;
       case 'attic_cache':
         ammo += 12;
@@ -595,6 +678,28 @@ export function createDirector(deps: DirectorDeps): Director {
     }
   };
 
+  // ── VO playback (cached HTMLAudio per key — no hot-path allocation) ──
+  const voCache = new Map<string, HTMLAudioElement>();
+  let voCurrent: HTMLAudioElement | null = null;
+  const playVo = (key: string) => {
+    const url = ASSETS[key];
+    if (!url) return; // clip not generated — text-only, degrade silently
+    if (voCurrent) {
+      voCurrent.pause();
+      voCurrent.currentTime = 0;
+    }
+    let el = voCache.get(key);
+    if (!el) {
+      el = new Audio(url);
+      el.volume = 0.95;
+      voCache.set(key, el);
+    }
+    voCurrent = el;
+    void el.play().catch(() => undefined);
+  };
+  // heartbeat: a looping dread-pulse that swells as hp falls
+  let heartEl: HTMLAudioElement | null = null;
+
   const talkTo = (it: { id: string; label: string; lines?: string[] }) => {
     const lines = it.lines ?? [];
     if (lines.length === 0) {
@@ -603,6 +708,7 @@ export function createDirector(deps: DirectorDeps): Director {
     }
     const i = npcLine[it.id] ?? 0;
     toast(lines[i]);
+    playVo(`vo_${it.id}_${i}`);
     npcLine[it.id] = (i + 1) % lines.length;
     audio.play('ui');
   };
@@ -663,6 +769,13 @@ export function createDirector(deps: DirectorDeps): Director {
       toast('You lay the keepsake in his hands. The Steward stills, and does not rise again.');
       return;
     }
+    if (itemId === '__pin__') {
+      if (entities.pinCorpse(actor.position, room)) {
+        audio.play('dagger');
+        toast('You drive the blade through the sternum, into the boards beneath. It will not rise soon.');
+      }
+      return;
+    }
     if (itemId) {
       const it = items.byId(itemId);
       if (!it) return;
@@ -717,6 +830,46 @@ export function createDirector(deps: DirectorDeps): Director {
           audio.play('puzzleBad');
         } else {
           startPick(itemId);
+        }
+      } else if (it.kind === 'clock') {
+        if (clockSolved) {
+          toast('The clock stands open, its secret spent.');
+        } else {
+          clockHour = (clockHour % 12) + 1;
+          audio.play('ui');
+          const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+          if (clockHour === 7) {
+            clockSolved = true;
+            audio.play('unlock');
+            dropNear('battery');
+            dropNear('bandage');
+            toast('VII — the hour the tide took her. Something CLICKS behind the dial; a hidden drawer spills its keepings.');
+          } else {
+            toast(`You turn the hands. They stand at ${ROMAN[clockHour - 1]}.`);
+          }
+        }
+      } else if (it.kind === 'portrait') {
+        audio.play('ui');
+        toast(
+          itemId === 'portrait_c'
+            ? 'Iseult Vane. Painted eyes, waiting to catch a light.'
+            : itemId === 'portrait_r'
+              ? 'Cosmo Vane — the boy. The eyes follow you.'
+              : 'Lucian Vane, the Founder. Hung last, watching the other two.',
+        );
+      } else if (it.kind === 'piano') {
+        if (songSolved) {
+          toast('The work-song still hangs in the air.');
+        } else if (!songKnown) {
+          toast("A grand piano, lid open. You don't know what to play. (Somewhere, his song is written down.)");
+          audio.play('puzzleBad');
+        } else {
+          songActive = true;
+          songStep = 0;
+          songPointer = 0;
+          songDir = 1;
+          audio.play('ui');
+          toast('You spread your hands over the keys — MID, TOP, LOW, HIGH. [E] strike the note · [Q] stop.');
         }
       } else if (it.kind === 'furnace') {
         if (furnaceLit) {
@@ -806,6 +959,18 @@ export function createDirector(deps: DirectorDeps): Director {
             ? hasAtticKey
             : true);
 
+  // NOISE: a shot echoes through the house — everything in the room snaps to
+  // it, and the Steward's cross-room hunt homes in fast. The dagger is silent.
+  let echoWarned = false;
+  const gunEcho = () => {
+    entities.alertRoom(room, actor.position.x, actor.position.z);
+    stalkTimer = Math.max(2, stalkTimer - 6);
+    if (!echoWarned) {
+      echoWarned = true;
+      toast('The shot ECHOES through the house. Everything heard it.');
+    }
+  };
+
   const doAttack = () => {
     const pos = actor.position;
     const face = actor.facingYaw;
@@ -823,6 +988,7 @@ export function createDirector(deps: DirectorDeps): Director {
       ammo -= 1;
       weaponView.attack('pistol');
       audio.play('gun');
+      gunEcho();
       const r = entities.attackNearest(pos, face, TUNING.pistolDamage, false, 45, true);
       reactAttack(r);
       if (ammo === 0) {
@@ -839,6 +1005,7 @@ export function createDirector(deps: DirectorDeps): Director {
       rifleAmmo -= 1;
       weaponView.attack('rifle');
       audio.play('shotgun');
+      gunEcho();
       const r = entities.attackNearest(pos, face, TUNING.rifleDamage, false, 55, true);
       reactAttack(r);
       if (rifleAmmo === 0) {
@@ -854,6 +1021,7 @@ export function createDirector(deps: DirectorDeps): Director {
       cannonAmmo -= 1;
       weaponView.attack('cannon');
       audio.play('shotgun');
+      gunEcho();
       const r = entities.attackNearest(pos, face, 4, false, 40, true); // hand-cannon hits hardest
       reactAttack(r);
     } else {
@@ -864,6 +1032,7 @@ export function createDirector(deps: DirectorDeps): Director {
       flares -= 1;
       weaponView.attack('flare');
       audio.play('flare');
+      gunEcho();
       const r = entities.attackNearest(pos, face, TUNING.flareDamage, true, 45, true);
       reactAttack(r);
       // stay equipped when empty (no auto-switch) + scatter a fresh flare to find
@@ -941,6 +1110,32 @@ export function createDirector(deps: DirectorDeps): Director {
     phase = 'DEAD';
     objective = 'The house keeps you now.';
     toast('You are arranged among the others.');
+    if (heartEl && !heartEl.paused) heartEl.pause();
+  };
+
+  // Rise at the last threshold: restore the state snapshotted when you last
+  // crossed a door. World progress (crests, keys, opened locks, dead bosses)
+  // persists — only YOU rewind. Fair without deleting the run.
+  const respawnAtCheckpoint = () => {
+    if (!checkpoint) return;
+    hp = checkpoint.hp;
+    ammo = checkpoint.ammo;
+    rifleAmmo = checkpoint.rifleAmmo;
+    cannonAmmo = checkpoint.cannonAmmo;
+    flares = checkpoint.flares;
+    ink = checkpoint.ink;
+    bandages = checkpoint.bandages;
+    battery = checkpoint.battery;
+    lockpicks = checkpoint.lockpicks;
+    bindT = 0;
+    picking = false;
+    dmgFlash = 0;
+    stalkTimer = 20; // the hunt resets — a breath before it finds your trail again
+    phase = 'PLAY';
+    world.setFlashlight(battery > 0);
+    enterRoom(checkpoint.room, checkpoint.entry, Math.PI);
+    audio.play('save');
+    toast(`You wake in the ${ROOMS[room].name}. The house pretends nothing happened.`);
   };
 
   const computePrompt = (): { itemId: string | null; exitIndex: number } => {
@@ -1013,6 +1208,18 @@ export function createDirector(deps: DirectorDeps): Director {
                             ? lockpicks > 0
                               ? 'Pick the lock'
                               : 'Locked (need a lockpick)'
+                          : it.kind === 'clock'
+                            ? clockSolved
+                              ? 'The Great Clock (open)'
+                              : 'Set the clock hands'
+                          : it.kind === 'portrait'
+                            ? 'Study the portrait'
+                          : it.kind === 'piano'
+                            ? songSolved
+                              ? 'The piano (the song lingers)'
+                              : songKnown
+                                ? 'Play the work-song'
+                                : 'A grand piano'
                           : it.kind === 'safe'
                             ? safeOpened
                               ? 'Wall-safe (open)'
@@ -1023,6 +1230,10 @@ export function createDirector(deps: DirectorDeps): Director {
                               ? 'Read'
                               : `Take ${it.label}`;
       exitIndex = -1;
+    } else if (entities.nearestCorpse(pos, room)) {
+      // dagger execute: buy time without spending a flare
+      promptText = 'Pin the corpse — delay its rising';
+      return { itemId: '__pin__', exitIndex: -1 };
     } else if (exitIndex >= 0) {
       const ex = exits[exitIndex];
       promptText = !exitOpen(ex) ? `${ex.label} (Locked)` : `Go to ${ex.label}`;
@@ -1034,6 +1245,7 @@ export function createDirector(deps: DirectorDeps): Director {
 
   const tick = (dt: number) => {
     world.setBrightness(controls.getBrightness()); // apply the Settings brightness every frame
+    world.setCrt(controls.getCrt());
     if (phase === 'TITLE') {
       const i = controls.consume();
       if (i.use || i.attack) {
@@ -1069,7 +1281,10 @@ export function createDirector(deps: DirectorDeps): Director {
       return;
     }
     if (phase === 'DEAD' || phase === 'WIN') {
-      controls.consume();
+      const i = controls.consume();
+      // DEAD: [E]/attack (or the HUD "Rise" button, which presses use) revives
+      // at the last threshold checkpoint instead of restarting the run.
+      if (phase === 'DEAD' && (i.use || i.attack) && checkpoint) respawnAtCheckpoint();
       pushStore();
       return;
     }
@@ -1113,7 +1328,7 @@ export function createDirector(deps: DirectorDeps): Director {
 
     const intents = controls.consume();
     // inventory screen: toggle with [I]/[Tab]; pauses play (movement + enemies) while open
-    if (intents.inventory && !picking) inventoryOpen = !inventoryOpen;
+    if (intents.inventory && !picking && !songActive) inventoryOpen = !inventoryOpen;
     if (inventoryOpen) {
       if (intents.invAction) applyInvAction(intents.invAction);
       pushStore();
@@ -1130,8 +1345,38 @@ export function createDirector(deps: DirectorDeps): Director {
     }
     const busyPick = picking;
 
+    // ── the work-song: rooted at the keys, world stays LIVE — playing a dead
+    // man's song in a dark house while things may be closing in ──
+    if (songActive) {
+      songPointer += songDir * 0.9 * dt;
+      if (songPointer >= 1) { songPointer = 1; songDir = -1; } else if (songPointer <= 0) { songPointer = 0; songDir = 1; }
+      if (intents.use || intents.attack) {
+        const zone = Math.min(3, Math.floor(songPointer * 4));
+        if (zone === SONG[songStep]) {
+          songStep += 1;
+          audio.play('puzzleOk');
+          if (songStep >= SONG.length) {
+            songActive = false;
+            songSolved = true;
+            audio.play('phonograph');
+            stalkTimer += 60; // the house stills — the hunt forgets you a while
+            dropNear('flare');
+            toast('The work-song settles over the house like dust. Somewhere far off, something stops pacing.');
+          }
+        } else {
+          songStep = 0;
+          audio.play('puzzleBad');
+          toast('A discord — the note curdles. Begin the song again.');
+        }
+      } else if (intents.swap) {
+        songActive = false;
+        toast('You lift your hands from the keys.');
+      }
+    }
+    const busySong = songActive;
+
     // ── wound-binding: rooted + vulnerable while the bandage goes on ──
-    if (intents.bind && bindT <= 0 && !frozen && !busyPick) {
+    if (intents.bind && bindT <= 0 && !frozen && !busyPick && !busySong) {
       if (bandages <= 0) {
         toast('No bandages.');
         audio.play('puzzleBad');
@@ -1144,8 +1389,36 @@ export function createDirector(deps: DirectorDeps): Director {
       }
     }
     const busyBinding = bindT > 0;
+    // ── sneak: toggle with [C]; sprinting breaks the crouch ──
+    if (intents.crouch && !frozen) {
+      crouched = !crouched;
+      audio.play('ui');
+      toast(crouched ? 'You sink low. Quiet now.' : 'You rise to your feet.');
+    }
+    // ── dodge-step: a stamina burst with i-frames — the answer to windups ──
+    if (intents.dodge && dodgeT <= 0 && stamina >= 25 && !busyBinding && !busyPick && !busySong && !frozen) {
+      stamina -= 25;
+      dodgeT = 0.22;
+      invulnT = 0.34; // brief invulnerability — dodge THROUGH the strike
+      const yaw = actor.facingYaw;
+      const mag = Math.hypot(dx, dy);
+      if (mag > 0.08) {
+        // dodge in the held movement direction (camera-relative, same math as walking)
+        dodgeDx = (Math.sin(yaw) * -dy + Math.cos(yaw) * dx) / mag;
+        dodgeDz = (Math.cos(yaw) * -dy - Math.sin(yaw) * dx) / mag;
+      } else {
+        dodgeDx = -Math.sin(yaw); // no input — hop backward, away from what you face
+        dodgeDz = -Math.cos(yaw);
+      }
+      crouched = false;
+      actor.addShake(0.18);
+      audio.play('step');
+    }
+    if (invulnT > 0) invulnT -= dt;
+
     // ── sprint: gated on stamina, rooted-out while binding/picking ──
-    const sprinting = intents.sprintHeld && stamina > 0 && canSprint && !busyBinding && !busyPick && !frozen;
+    const sprinting = intents.sprintHeld && stamina > 0 && canSprint && !busyBinding && !busyPick && !busySong && !frozen;
+    if (sprinting) crouched = false;
 
     // move (binding / picking roots you in place)
     actor.update({
@@ -1154,9 +1427,18 @@ export function createDirector(deps: DirectorDeps): Director {
       world,
       roomId: room,
       deltaSeconds: dt,
-      frozen: frozen || busyBinding || busyPick,
+      frozen: frozen || busyBinding || busyPick || busySong,
       sprint: sprinting,
+      crouch: crouched,
     });
+
+    // dodge burst: fast lateral displacement on top of normal movement
+    if (dodgeT > 0) {
+      dodgeT -= dt;
+      actor.position.x += dodgeDx * 11 * dt;
+      actor.position.z += dodgeDz * 11 * dt;
+      world.clampToRoom(room, actor.position);
+    }
 
     // ── survival meters ──
     if (sprinting && actor.moving) stamina = Math.max(0, stamina - TUNING.sprintDrain * dt);
@@ -1188,7 +1470,7 @@ export function createDirector(deps: DirectorDeps): Director {
       stepTimer -= dt;
       if (stepTimer <= 0) {
         audio.play('step');
-        stepTimer = sprinting ? 0.28 : 0.42;
+        stepTimer = sprinting ? 0.28 : crouched ? 0.85 : 0.42; // sneaking treads softly
       }
     }
 
@@ -1207,18 +1489,74 @@ export function createDirector(deps: DirectorDeps): Director {
       }
     }
 
+    // ── the portrait eyes: hold the BEAM on each Vane portrait in the order he
+    // lost them (wife → son → himself). The flashlight is the puzzle verb. ──
+    if (!frozen && room === 'landing' && !eyesSolved && world.flashlightOn()) {
+      const PORTRAITS = [
+        { id: 'portrait_l', lx: -4 },
+        { id: 'portrait_c', lx: 0 },
+        { id: 'portrait_r', lx: 4 },
+      ];
+      const c = ROOMS.landing.center;
+      let idx = -1;
+      for (let i = 0; i < PORTRAITS.length; i++) {
+        const dx = c[0] + PORTRAITS[i].lx - actor.position.x;
+        const dz = c[2] - 5.7 - actor.position.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 8) continue;
+        let diff = Math.atan2(dx, dz) - actor.facingYaw;
+        diff = ((diff + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        if (Math.abs(diff) < 0.28) {
+          idx = i;
+          break;
+        }
+      }
+      if (idx !== aimTargetIdx) {
+        aimTargetIdx = idx;
+        aimT = 0;
+        if (idx === -1) litLatch = ''; // beam off all portraits — can re-light
+      } else if (idx >= 0) {
+        aimT += dt;
+        const pid = PORTRAITS[idx].id;
+        if (aimT > 0.7 && litLatch !== pid) {
+          litLatch = pid;
+          if (EYES_ORDER[eyesStep] === pid) {
+            eyesStep += 1;
+            audio.play('eyeAlign');
+            if (eyesStep >= EYES_ORDER.length) {
+              eyesSolved = true;
+              audio.play('vaultOpen');
+              dropNear('flare');
+              dropNear('rifleAmmo');
+              toast('Three pairs of painted eyes kindle gold — a panel behind the Founder swings wide. His hoard spills out.');
+            } else {
+              toast(`The painted eyes catch your light and KINDLE… (${eyesStep}/3)`);
+            }
+          } else if (eyesStep > 0) {
+            eyesStep = 0;
+            audio.play('puzzleBad');
+            toast('The kindled eyes dim, disappointed. Begin the order again.');
+          } else {
+            audio.play('ui');
+            toast('The painted eyes glint under your beam — but this is not where his grief begins.');
+          }
+        }
+      }
+    }
+
     // enemies
-    const et = entities.update(dt, actor.position, world);
-    if (et.contactDamage > 0) {
+    const et = entities.update(dt, actor.position, world, crouched);
+    // dodge i-frames: damage rolls off entirely while invulnerable
+    if (et.contactDamage > 0 && invulnT <= 0) {
       hp -= et.contactDamage * dt;
       if (et.grabbed && Math.random() < dt * 1.5) audio.play('grab');
     }
-    if (et.burstDamage > 0) {
+    if (et.burstDamage > 0 && invulnT <= 0) {
       hp -= et.burstDamage;
       if (et.weeperSpat) audio.play('weeperSpit');
     }
     // ── damage feedback: directional vignette + view-shake ──
-    const tookHit = et.contactDamage > 0 || et.burstDamage > 0;
+    const tookHit = (et.contactDamage > 0 || et.burstDamage > 0) && invulnT <= 0;
     if (tookHit) {
       const a = entities.hitFromAngle(actor.position, room);
       if (a !== null) dmgAngle = a - actor.facingYaw;
@@ -1252,6 +1590,17 @@ export function createDirector(deps: DirectorDeps): Director {
       }
     }
 
+    // ── lightning: the storm flashes through the above-ground manor ──
+    lightningTimer -= dt;
+    if (lightningTimer <= 0) {
+      lightningTimer = 16 + Math.random() * 26;
+      const wing = ROOMS[room].wing;
+      if (wing !== 'cellar' && wing !== 'lab') {
+        world.triggerLightning();
+        audio.play('lightning');
+      }
+    }
+
     // steward follows through doors
     if (stewardRelocTimer > 0) {
       stewardRelocTimer -= dt;
@@ -1264,7 +1613,7 @@ export function createDirector(deps: DirectorDeps): Director {
     if (stewardActivated && entities.stewardActive() && stewardRelocTimer <= 0) {
       const sr = entities.stewardRoom();
       if (sr !== null && sr !== room) {
-        stalkTimer -= dt * (world.flashlightOn() ? 1.8 : 1.0);
+        stalkTimer -= dt * (world.flashlightOn() ? 1.8 : 1.0) * (crouched ? 0.55 : 1); // sneaking muddies your trail
         if (stalkTimer <= 0) {
           entities.relocateStewardTo(room, world);
           audio.play('stewardStep');
@@ -1278,6 +1627,20 @@ export function createDirector(deps: DirectorDeps): Director {
 
     // health / death
     world.setHealthFactor(hp / TUNING.playerMaxHp);
+    // heartbeat swells under 32 hp — dread you can hear
+    const wantHeart = hp > 0 && hp < 32;
+    if (wantHeart) {
+      if (!heartEl && ASSETS['sfx_heartbeat']) {
+        heartEl = new Audio(ASSETS['sfx_heartbeat']);
+        heartEl.loop = true;
+      }
+      if (heartEl) {
+        heartEl.volume = Math.min(0.85, 0.3 + (1 - hp / 32) * 0.6);
+        if (heartEl.paused) void heartEl.play().catch(() => undefined);
+      }
+    } else if (heartEl && !heartEl.paused) {
+      heartEl.pause();
+    }
     if (hp <= 0) {
       die();
       pushStore();
@@ -1287,7 +1650,7 @@ export function createDirector(deps: DirectorDeps): Director {
     // interaction prompt + intents (while picking a lock, those inputs are the
     // minigame's — don't also fire interact/attack/swap here)
     const { itemId, exitIndex } = computePrompt();
-    if (!busyPick) {
+    if (!busyPick && !busySong) {
       if (intents.use) interact(itemId, exitIndex);
       if (intents.attack && !busyBinding) doAttack();
       if (intents.swap) cycleWeapon();

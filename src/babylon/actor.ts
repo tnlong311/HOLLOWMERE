@@ -19,6 +19,7 @@ export interface ActorMoveContext {
   deltaSeconds: number;
   frozen: boolean;
   sprint?: boolean; // move at sprint speed this frame (director gates on stamina)
+  crouch?: boolean; // sneak: slow, low eye — near-invisible in the dark
 }
 
 export interface PlayerActor {
@@ -49,6 +50,7 @@ export function createPlayerActor(scene: Scene): PlayerActor {
   let bobT = 0;
   let shake = 0; // decaying view-shake magnitude (spiked by addShake on hits)
   let shakeT = 0;
+  let crouchOff = 0; // smoothed eye-lowering while sneaking
 
   return {
     node,
@@ -70,7 +72,7 @@ export function createPlayerActor(scene: Scene): PlayerActor {
       prevDY = 0;
       dragging = false;
     },
-    update({ input, camera, world, roomId, deltaSeconds, frozen, sprint }) {
+    update({ input, camera, world, roomId, deltaSeconds, frozen, sprint, crouch }) {
       // ── look: mouse (pointer-lock, desktop) ──
       const mouse = controls.consumeLook();
       if (mouse.dx !== 0 || mouse.dy !== 0) {
@@ -110,16 +112,18 @@ export function createPlayerActor(scene: Scene): PlayerActor {
         const mvx = sinY * -dy + cosY * dx;
         const mvz = cosY * -dy - sinY * dx;
         const len = Math.hypot(mvx, mvz) || 1;
-        const speed = (sprint ? TUNING.sprintSpeed : TUNING.walkSpeed) * Math.min(1, mag);
+        const speed = (sprint ? TUNING.sprintSpeed : crouch ? TUNING.walkSpeed * 0.45 : TUNING.walkSpeed) * Math.min(1, mag);
         node.position.x += (mvx / len) * speed * deltaSeconds;
         node.position.z += (mvz / len) * speed * deltaSeconds;
-        bobT += deltaSeconds * (sprint ? 13 : 9);
+        bobT += deltaSeconds * (sprint ? 13 : crouch ? 5 : 9);
       }
       world.clampToRoom(roomId, node.position);
 
-      // ── drive the camera (eye + head-bob + stair climb + hit-shake) ──
-      const bob = moving ? Math.sin(bobT) * 0.045 : 0;
-      const stairY = world.stairEyeOffset(roomId, node.position);
+      // ── drive the camera (eye + head-bob + stair climb + hit-shake + crouch) ──
+      const bob = moving ? Math.sin(bobT) * (crouch ? 0.02 : 0.045) : 0;
+      const crouchTarget = crouch ? -0.55 : 0;
+      crouchOff += (crouchTarget - crouchOff) * Math.min(1, deltaSeconds * 9);
+      const stairY = world.stairEyeOffset(roomId, node.position) + crouchOff;
       // view-shake: fast decaying jitter on the eye + a roll kick when hit
       let shX = 0, shY = 0, shRoll = 0;
       if (shake > 0.001) {

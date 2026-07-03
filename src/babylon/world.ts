@@ -7,13 +7,17 @@
 import {
   Color3,
   Color4,
+  DynamicTexture,
   Effect,
+  GlowLayer,
   HemisphericLight,
   Mesh,
   MeshBuilder,
+  ParticleSystem,
   PointLight,
   PostProcess,
   Scene,
+  ShadowGenerator,
   SpotLight,
   StandardMaterial,
   Texture,
@@ -77,6 +81,9 @@ export interface GameWorldObjects {
   stairTrigger(id: RoomId, pos: Vector3): string | null; // exitId if at the top of a walkable stair
   setPixelParams(pixel: number, levels: number, dither: number): void;
   setBrightness(v: number): void; // player gamma calibration
+  setCrt(on: boolean): void; // CRT/film post toggle (scanlines + weave)
+  addShadowCaster(node: TransformNode): void; // register a dynamic mesh tree (enemies) with the beam's shadow map
+  triggerLightning(): void; // storm flash — strobing illumination for ~0.4s
   toggleFlashlight(): boolean; // returns new on/off state
   setFlashlight(on: boolean): void;
   setFlashlightHealth(frac: number): void; // 0..1 battery — drives dying-cell flicker
@@ -109,6 +116,7 @@ function registerCrushShader(): void {
     uniform float uSteward;  // 0..1 proximity -> chromatic aberration
     uniform vec3  uTint;
     uniform float uBright;   // player brightness/gamma calibration
+    uniform float uCrt;      // CRT/film look: scanlines + frame weave (0/1)
 
     float bayer4(vec2 p){
       int x = int(mod(p.x,4.0));
@@ -129,6 +137,8 @@ function registerCrushShader(): void {
       // pixelate: snap to a low-res grid
       vec2 grid = max(uRes/uPixel, vec2(1.0));
       vec2 puv = (floor(vUV*grid)+0.5)/grid;
+      // film weave: the frame drifts a hair, like a worn projector gate
+      puv.x += uCrt * (hash(vec2(floor(uTime*24.0), 7.0)) - 0.5) * 0.0016;
 
       float ca = uSteward*0.004;
       vec3 col;
@@ -160,6 +170,11 @@ function registerCrushShader(): void {
       vec2 d = vUV-0.5;
       float vig = 1.0 - dot(d,d)*uVignette*2.2;
       col *= clamp(vig,0.0,1.0);
+
+      // CRT: faint scanlines + slow luminance flicker (found-footage finish)
+      float scan = 0.94 + 0.06*sin(vUV.y*uRes.y*3.14159);
+      float flick = 1.0 + (hash(vec2(floor(uTime*12.0), 3.0)) - 0.5) * 0.05;
+      col *= mix(1.0, scan*flick, uCrt);
 
       gl_FragColor = vec4(clamp(col,0.0,1.0),1.0);
     }
@@ -460,7 +475,7 @@ function decorateRoom(scene: Scene, rt: RoomRuntime): void {
     // + Crest Door x5.5 stay clear).
     // dark, but NOT pure-black: it must catch the flashlight so it reads as a
     // recessed passage into shadow, not a flat black hole punched in the wall.
-    const upDark = createStandardMaterial(scene, `hall_updark_${def.id}`, new Color3(0.12, 0.12, 0.15), new Color3(0.03, 0.03, 0.045));
+    const upDark = createStandardMaterial(scene, `hall_updark_${def.id}`, new Color3(0.18, 0.17, 0.21), new Color3(0.05, 0.05, 0.07));
     // gentle flight rising to a low landing so a FULL-height doorway fits under
     // the 4.2m ceiling (a taller flight squashed the arch — the "cut-in-half" look).
     for (let i = 0; i <= 5; i++) {
@@ -671,7 +686,7 @@ function decorateRoom(scene: Scene, rt: RoomRuntime): void {
     box(0.2, 0.9, 0.2, 7, 0.75, d / 2 - 0.6, wood);
     // the way DOWN: a descending lip + a dark archway in the balcony wall, so the
     // stairhead reads from across the room (it was a blank wall before).
-    const downDark = createStandardMaterial(scene, `land_down_${def.id}`, new Color3(0.12, 0.12, 0.15), new Color3(0.03, 0.03, 0.045));
+    const downDark = createStandardMaterial(scene, `land_down_${def.id}`, new Color3(0.18, 0.17, 0.21), new Color3(0.05, 0.05, 0.07));
     for (let i = 0; i < 3; i++) {
       const h = 0.6 - i * 0.18; // a short descending lip toward the opening
       box(2.4, h, 0.5, 0, h / 2, d / 2 - 1.7 + i * 0.5, stone);
@@ -802,6 +817,10 @@ function decorateRoom(scene: Scene, rt: RoomRuntime): void {
 }
 
 // Drop a generated GLB prop as non-colliding scene decor, normalised to size.
+// Shadow sink: createGameWorld installs a callback so async GLB decor loaded by
+// glbDecor (defined outside its closure) can register as flashlight shadow casters.
+let shadowSink: ((m: Mesh) => void) | null = null;
+
 function glbDecor(scene: Scene, node: TransformNode, assetKey: string, lx: number, lz: number, targetSize: number): void {
   const url = ASSETS[assetKey];
   if (!url) return;
@@ -818,6 +837,19 @@ function glbDecor(scene: Scene, node: TransformNode, assetKey: string, lx: numbe
       m.isPickable = false;
       m.doNotSyncBoundingInfo = true;
       m.freezeWorldMatrix();
+      m.receiveShadows = true;
+      shadowSink?.(m as Mesh); // furniture throws long shadows through the beam
+      // Albedo floor: props authored with near-black albedo (black-lacquer
+      // piano, phonograph horn…) absorb ALL light and render as featureless
+      // black blocks in the dark manor. Lift only near-black channels so the
+      // prop catches the flashlight while staying dark-toned.
+      const mat = m.material as unknown as { albedoColor?: Color3; diffuseColor?: Color3 } | null;
+      const c = mat?.albedoColor ?? mat?.diffuseColor;
+      if (c && c.r < 0.14 && c.g < 0.14 && c.b < 0.14) {
+        c.r = Math.max(c.r, 0.14);
+        c.g = Math.max(c.g, 0.14);
+        c.b = Math.max(c.b, 0.16); // faint cool cast so it reads as lacquer, not mud
+      }
     });
   });
 }
@@ -861,6 +893,69 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
   flashlight.range = 34;
   let flashOn = true;
   let flashHealth = 1; // battery fraction (0..1) — drives the dying-cell flicker
+
+  // ── LIGHT OVERHAUL ────────────────────────────────────────────────
+  // 1) The flashlight CASTS SHADOWS: anything caught in the beam drags a long
+  // silhouette across the room behind it. One shadow map, blurred; the pixel
+  // crush hides the jaggies for free.
+  flashlight.shadowMinZ = 0.4;
+  flashlight.shadowMaxZ = 38;
+  const shadowGen = new ShadowGenerator(1024, flashlight);
+  shadowGen.useBlurExponentialShadowMap = true;
+  shadowGen.blurKernel = 16;
+  shadowGen.bias = 0.002;
+  shadowSink = (m) => shadowGen.addShadowCaster(m, false);
+
+  // 2) Emissives BLEED light — sconces, crest sockets, spore pods, projectiles.
+  const glow = new GlowLayer('hm-glow', scene, { blurKernelSize: 32 });
+  glow.intensity = 0.65;
+
+  // 3) The beam is VISIBLE: a soft additive cone + dust motes drifting in it.
+  const beamMat = new StandardMaterial('beam-cone', scene);
+  beamMat.emissiveColor = new Color3(1.0, 0.93, 0.78);
+  beamMat.diffuseColor = new Color3(0, 0, 0);
+  beamMat.alpha = 0.055;
+  beamMat.disableLighting = true;
+  beamMat.backFaceCulling = false;
+  const beamCone = MeshBuilder.CreateCylinder('beam-cone', { diameterTop: 2.6, diameterBottom: 0.06, height: 7.5, tessellation: 16, cap: 0 }, scene);
+  beamCone.material = beamMat;
+  beamCone.parent = camera;
+  beamCone.rotation.x = Math.PI / 2;
+  beamCone.position.set(0.1, -0.1, 3.95);
+  beamCone.isPickable = false;
+
+  // dust motes: a tiny radial-blob texture + a drifting particle field ahead of the eye
+  const moteTex = new DynamicTexture('mote-tex', { width: 32, height: 32 }, scene, false);
+  {
+    const ctx = moteTex.getContext() as CanvasRenderingContext2D;
+    const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    g.addColorStop(0, 'rgba(255,244,220,1)');
+    g.addColorStop(1, 'rgba(255,244,220,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 32, 32);
+    moteTex.update();
+  }
+  const motes = new ParticleSystem('motes', 70, scene);
+  motes.particleTexture = moteTex as unknown as Texture;
+  motes.emitter = new Vector3(0, 1.6, 0);
+  motes.minEmitBox = new Vector3(-1.6, -1.2, -1.6);
+  motes.maxEmitBox = new Vector3(1.6, 1.2, 1.6);
+  motes.color1 = new Color4(1, 0.95, 0.8, 0.16);
+  motes.color2 = new Color4(1, 0.9, 0.7, 0.08);
+  motes.colorDead = new Color4(1, 0.9, 0.7, 0);
+  motes.minSize = 0.012;
+  motes.maxSize = 0.05;
+  motes.minLifeTime = 3;
+  motes.maxLifeTime = 6;
+  motes.emitRate = 14;
+  motes.direction1 = new Vector3(-0.04, -0.02, -0.04);
+  motes.direction2 = new Vector3(0.04, 0.05, 0.04);
+  motes.gravity = new Vector3(0, -0.008, 0);
+  motes.blendMode = ParticleSystem.BLENDMODE_ADD;
+  motes.start();
+
+  // 4) LIGHTNING: a strobing flash through the manor (director schedules it)
+  let lightningT = 0;
 
   // A second accent light for the save-room hearth (only bright in 'save' wing).
   const hearth = new PointLight('hearth', new Vector3(ROOMS.drawing.center[0], 1.2, ROOMS.drawing.center[1] - 4), scene);
@@ -909,6 +1004,7 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
       m.isPickable = false;
       m.doNotSyncBoundingInfo = true;
       m.freezeWorldMatrix();
+      m.receiveShadows = true; // walls/floors catch the beam's cast shadows
     });
   });
   // Rooms are in-engine geometry in the first-person build (no GLB backdrops).
@@ -918,7 +1014,7 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
   const crush = new PostProcess(
     'hmCrush',
     'hmCrush',
-    ['uRes', 'uPixel', 'uLevels', 'uDither', 'uVignette', 'uGrain', 'uTime', 'uHealth', 'uSteward', 'uTint', 'uBright'],
+    ['uRes', 'uPixel', 'uLevels', 'uDither', 'uVignette', 'uGrain', 'uTime', 'uHealth', 'uSteward', 'uTint', 'uBright', 'uCrt'],
     null,
     1.0,
     camera,
@@ -930,6 +1026,7 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
   let stewardProx = 0;
   let healthFactor = 1;
   let brightness = 1; // player calibration (Settings slider), 0.7..1.8
+  let crtOn = 0; // CRT/film post toggle
   let timeAcc = 0;
   crush.onApply = (effect) => {
     effect.setFloat2('uRes', crush.width || scene.getEngine().getRenderWidth(), crush.height || scene.getEngine().getRenderHeight());
@@ -943,6 +1040,7 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
     effect.setFloat('uSteward', stewardProx);
     effect.setFloat3('uTint', tint[0], tint[1], tint[2]);
     effect.setFloat('uBright', brightness);
+    effect.setFloat('uCrt', crtOn);
   };
 
   let activeRoom: RoomId = 'hall';
@@ -1051,6 +1149,19 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
     setBrightness(v) {
       brightness = v < 0.6 ? 0.6 : v > 2 ? 2 : v;
     },
+    setCrt(on) {
+      crtOn = on ? 1 : 0;
+    },
+    addShadowCaster(node) {
+      // register a dynamic mesh tree (enemy bodies) with the beam's shadow map
+      node.getChildMeshes(false).forEach((m) => {
+        shadowGen.addShadowCaster(m as Mesh, false);
+        m.receiveShadows = true;
+      });
+    },
+    triggerLightning() {
+      lightningT = 0.42;
+    },
     toggleFlashlight() {
       flashOn = !flashOn;
       return flashOn;
@@ -1079,13 +1190,38 @@ export function createGameWorld(scene: Scene, _canvas: HTMLCanvasElement): GameW
           if (Math.sin(timeAcc * 47) + Math.sin(timeAcc * 17.3) > 0.6 + fail) b *= 0.12; // brown-out stutters
         }
         flashlight.intensity = b;
+        beamCone.setEnabled(true);
+        beamMat.alpha = 0.03 + (b / 4.2) * 0.035; // the visible shaft flickers with the cell
       } else {
         flashlight.intensity = 0;
+        beamCone.setEnabled(false);
+      }
+      // dust motes ride ~3m ahead of the eye, inside the beam's throw
+      const fwdX = Math.sin(camera.rotation.y);
+      const fwdZ = Math.cos(camera.rotation.y);
+      (motes.emitter as Vector3).set(lanternTarget.x + fwdX * 3, 1.7, lanternTarget.z + fwdZ * 3);
+      // lightning: violent strobe, then gone
+      if (lightningT > 0) {
+        lightningT -= dt;
+        const p = Math.max(0, lightningT / 0.42);
+        const strobe = Math.sin(timeAcc * 90) > -0.2 ? 1 : 0.15;
+        hemiLight.intensity = 0.07 + strobe * p * 1.5;
+        hemiLight.diffuse.set(0.62, 0.68, 0.85);
+        if (lightningT <= 0) {
+          hemiLight.intensity = 0.07;
+          hemiLight.diffuse.set(0.28, 0.34, 0.5);
+        }
       }
       hearth.intensity = rooms[activeRoom].def.wing === 'save' ? 1.1 + Math.sin(timeAcc * 9) * 0.18 : 0;
       musicLamp.intensity = activeRoom === 'music_room' ? 1.7 + Math.sin(timeAcc * 8) * 0.12 : 0;
     },
     dispose() {
+      shadowSink = null;
+      motes.dispose();
+      moteTex.dispose();
+      beamCone.dispose(false, true);
+      glow.dispose();
+      shadowGen.dispose();
       crush.dispose();
       flashlight.dispose();
       lantern.dispose();

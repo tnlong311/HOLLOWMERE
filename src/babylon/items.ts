@@ -75,7 +75,7 @@ function buildCrestDoorDressing(scene: Scene, node: TransformNode): CrestSocket[
   return sockets;
 }
 
-export type InteractKind = 'item' | 'savedesk' | 'book' | 'case' | 'crestdoor' | 'doc' | 'phono' | 'vault' | 'furnace' | 'valve' | 'fusebox' | 'npc' | 'safe' | 'lockbox';
+export type InteractKind = 'item' | 'savedesk' | 'book' | 'case' | 'crestdoor' | 'doc' | 'phono' | 'vault' | 'furnace' | 'valve' | 'fusebox' | 'npc' | 'safe' | 'lockbox' | 'clock' | 'portrait' | 'piano';
 
 export interface Interactable {
   id: string;
@@ -264,6 +264,12 @@ const SPECS: ItemSpec[] = [
   // The Sister's Room [U05]: refuge + Marion's traces — Ysolde is here early,
   // Marion's photo foreshadows the reunion, herbs; a near-safe room (no enemy).
   { id: 'marion_photo', roomId: 'sister_room', lx: -3.2, lz: 2.4, kind: 'item', label: "Marion's Photo", asset: ASSET_KEYS.props.book, color: [0.7, 0.7, 0.62], emissive: true, scale: 0.45, spin: true },
+  // ── puzzles: the Great Clock + the Vane portrait line (Landing), the piano (Music Room) ──
+  { id: 'great_clock', roomId: 'landing', lx: 7.8, lz: 3, kind: 'clock', label: 'The Great Clock', color: [0.3, 0.22, 0.14], scale: 1.0 },
+  { id: 'portrait_l', roomId: 'landing', lx: -4, lz: -4.4, kind: 'portrait', label: 'Portrait (left)', color: [0.3, 0.26, 0.2], scale: 0.8 },
+  { id: 'portrait_c', roomId: 'landing', lx: 0, lz: -4.4, kind: 'portrait', label: 'Portrait (centre)', color: [0.3, 0.26, 0.2], scale: 0.8 },
+  { id: 'portrait_r', roomId: 'landing', lx: 4, lz: -4.4, kind: 'portrait', label: 'Portrait (right)', color: [0.3, 0.26, 0.2], scale: 0.8 },
+  { id: 'piano_keys', roomId: 'music_room', lx: -4, lz: -1.6, kind: 'piano', label: 'The Grand Piano', color: [0.2, 0.18, 0.2], scale: 0.8 },
   // The Steward's Loft [U07]: a hound nest + his keepsake (mercy) and ledger /
   // work-song sheet — the compulsion made visible. Plus a servants' ammo cache.
   { id: 'keepsake', roomId: 'attic_loft', lx: -3, lz: 2, kind: 'item', label: "The Steward's Keepsake", asset: ASSET_KEYS.props.brassKey, color: [0.7, 0.66, 0.4], emissive: true, scale: 0.4, spin: true },
@@ -328,7 +334,10 @@ export function createItemField(scene: Scene): ItemField {
     fb.material = mat;
     fb.position.y = spec.kind === 'item' || spec.kind === 'doc' ? 0.9 : 0.5;
     fb.parent = node;
-    if (spec.viz) {
+    if (spec.kind === 'clock' || spec.kind === 'portrait' || spec.kind === 'piano') {
+      // invisible interaction markers — the visual is existing room geometry
+      fb.setEnabled(false);
+    } else if (spec.viz) {
       // procedural consumable model (ammo / flare) — replaces the plain box
       const viz = buildPickupViz(scene, spec.viz, spec.id);
       viz.parent = node;

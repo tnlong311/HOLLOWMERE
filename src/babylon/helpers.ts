@@ -223,23 +223,59 @@ export function glbLoadStats(): { started: number; inFlight: number } {
   return { started: glbStarted, inFlight: glbInFlight };
 }
 
+// ── Concurrency-limited, retrying GLB loader ──────────────────────────
+// The scene fires ~100 model loads at once. A local dev server shrugs that
+// off, but over a tunnel/CDN the HTTP/2 multiplexed burst gets partially
+// dropped and those models silently fall back to capsules. Cap the burst and
+// retry dropped fetches. CRITICAL for dev (React StrictMode remounts dispose
+// the scene): every await is followed by a disposed-scene bail so a dead
+// scene's queued loads drain instantly instead of clogging the slots.
+const MAX_CONCURRENT_LOADS = 6;
+let activeLoads = 0;
+const loadQueue: Array<() => void> = [];
+function acquireSlot(): Promise<void> {
+  if (activeLoads < MAX_CONCURRENT_LOADS) {
+    activeLoads += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => loadQueue.push(resolve));
+}
+function releaseSlot(): void {
+  const next = loadQueue.shift();
+  if (next) next();
+  else activeLoads -= 1;
+}
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function loadGlbModel(scene: Scene, url: string, name: string): Promise<Nullable<LoadedModel>> {
   glbStarted += 1;
   glbInFlight += 1;
+  await acquireSlot();
   try {
     const options = url.startsWith('data:') ? { pluginExtension: '.glb' } : undefined;
-    const result = await ImportMeshAsync(url, scene, options);
-    const root = new Mesh(name, scene);
-    for (const imported of result.meshes) {
-      if (!imported.parent) imported.parent = root;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (scene.isDisposed) return null; // dev remount — bail, free the slot
+      try {
+        const result = await ImportMeshAsync(url, scene, options);
+        const root = new Mesh(name, scene);
+        for (const imported of result.meshes) {
+          if (!imported.parent) imported.parent = root;
+        }
+        // Stop auto-playing animation groups; the caller decides what plays.
+        for (const ag of result.animationGroups) ag.stop();
+        return { root, animationGroups: result.animationGroups };
+      } catch (error) {
+        if (scene.isDisposed) return null; // scene died mid-fetch — don't retry
+        if (attempt === 3) {
+          console.warn(`[babylon] model load failed after retries (${name}); keeping fallback.`, error);
+          return null;
+        }
+        await sleepMs(350 * (attempt + 1)); // transient drop — back off and retry
+      }
     }
-    // Stop auto-playing animation groups; the caller decides what plays.
-    for (const ag of result.animationGroups) ag.stop();
-    return { root, animationGroups: result.animationGroups };
-  } catch (error) {
-    console.warn(`[babylon] model load failed (${name}); keeping fallback.`, error);
     return null;
   } finally {
+    releaseSlot();
     glbInFlight -= 1;
   }
 }

@@ -18,6 +18,7 @@ const INK = '#e9dcc3';
 const AMBER = '#d9a441';
 const titleImg = ASSETS['ui_title'];
 const crestImg = ASSETS['ui_crest_icons'];
+const introVideo = ASSETS['intro_cinematic'];
 
 export function Hud({ phaseRef }: HudProps) {
   const [s, setS] = useState<GameStoreSnapshot>(() => getGameSnapshot());
@@ -32,6 +33,13 @@ export function Hud({ phaseRef }: HudProps) {
   const applyBright = (v: number) => {
     setBright(v);
     void import('./controls').then((m) => m.controls.setBrightness(v));
+  };
+  const [crt, setCrt] = useState(() => {
+    try { return localStorage.getItem('hm_crt') === '1'; } catch { return false; }
+  });
+  const applyCrt = (on: boolean) => {
+    setCrt(on);
+    void import('./controls').then((m) => m.controls.setCrt(on));
   };
 
   const healthColor = s.healthState === 'danger' ? '#c2452f' : s.healthState === 'caution' ? '#d98a2b' : AMBER;
@@ -74,6 +82,7 @@ export function Hud({ phaseRef }: HudProps) {
           <div style={topRightStyle}>
             <div style={{ color: healthColor, fontWeight: 700, letterSpacing: 1 }}>
               {s.healthState === 'danger' ? 'DANGER' : s.healthState === 'caution' ? 'CAUTION' : 'STEADY'}
+              {s.sneaking ? <span style={{ color: '#5fa8c7', marginLeft: 10, fontSize: '0.72rem' }}>◦ SNEAKING</span> : null}
             </div>
             <div style={barTrackStyle}>
               <div style={{ ...barFillStyle, width: `${s.health}%`, background: healthColor }} />
@@ -151,16 +160,21 @@ export function Hud({ phaseRef }: HudProps) {
         </div>
       ) : null}
 
-      {/* INTRO CUTSCENE — tells the story while every asset preloads behind it;
-          the final "Enter" stays locked until the estate is fully loaded. */}
-      {s.hudPhase === 'TITLE' ? <IntroCutscene ready={s.ready} loadProgress={s.loadProgress} /> : null}
+      {/* LOADING — a dedicated screen that holds until EVERY asset is loaded;
+          only then does the intro cutscene / start screen mount. */}
+      {s.hudPhase === 'TITLE' && !s.ready ? <LoadingScreen progress={s.loadProgress} /> : null}
+
+      {/* INTRO CUTSCENE — mounts only once the estate is fully loaded, so the
+          story timer and the video begin from a clean, asset-complete state. */}
+      {s.hudPhase === 'TITLE' && s.ready ? <IntroCutscene ready={s.ready} loadProgress={s.loadProgress} /> : null}
 
       {/* DEATH */}
       {s.hudPhase === 'DEAD' ? (
         <div style={endStyle}>
           <h1 style={{ color: '#c2452f', letterSpacing: 4 }}>ARRANGED</h1>
           <p style={{ color: INK, opacity: 0.8 }}>The Steward tidies you among the others.</p>
-          <button style={beginBtnStyle} onClick={restart}>Try Again</button>
+          <button style={beginBtnStyle} onClick={() => triggerStart()}>▸ Rise at the {s.checkpointName || 'threshold'}</button>
+          <button style={{ ...beginBtnStyle, opacity: 0.55, fontSize: '0.82rem', marginTop: 6 }} onClick={restart}>Restart from the porch</button>
         </div>
       ) : null}
 
@@ -200,6 +214,27 @@ export function Hud({ phaseRef }: HudProps) {
         </div>
       ) : null}
 
+      {/* Work-song piano minigame — world stays LIVE while you play. */}
+      {s.songActive ? (
+        <div style={pickWrapStyle}>
+          <div style={{ color: AMBER, letterSpacing: 3, fontSize: '0.9rem', marginBottom: 4 }}>THE WORK-SONG</div>
+          <div style={{ color: INK, opacity: 0.7, fontSize: '0.74rem', marginBottom: 12 }}>
+            MID · TOP · LOW · HIGH — note <b style={{ color: AMBER }}>{s.songStep + 1}</b>/4
+          </div>
+          <div style={{ ...pickTrackStyle, display: 'flex' }}>
+            {['LOW', 'MID', 'HIGH', 'TOP'].map((z, i) => (
+              <div key={z} style={{ flex: 1, borderRight: i < 3 ? '1px solid rgba(233,220,195,0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', letterSpacing: 1, color: INK, opacity: 0.65, fontFamily: fontStack }}>
+                {z}
+              </div>
+            ))}
+            <div style={{ position: 'absolute', top: -4, bottom: -4, left: `calc(${s.songPointer * 100}% - 1px)`, width: 3, background: '#e9dcc3', boxShadow: '0 0 6px #e9dcc3' }} />
+          </div>
+          <div style={{ color: INK, opacity: 0.6, fontSize: '0.72rem', marginTop: 12 }}>
+            <b style={{ color: AMBER }}>E</b> / <b style={{ color: AMBER }}>click</b> — strike the note · <b style={{ color: AMBER }}>Q</b> — stop
+          </div>
+        </div>
+      ) : null}
+
       {/* Full categorized inventory (toggle with I / Tab — pauses play) */}
       {s.inventoryOpen ? <InventoryScreen s={s} /> : null}
 
@@ -223,6 +258,10 @@ export function Hud({ phaseRef }: HudProps) {
             <span>Brightness <b style={{ color: AMBER }}>{Math.round(bright * 100)}%</b></span>
             <input type="range" min={0.7} max={1.8} step={0.05} value={bright} onChange={(e) => applyBright(Number(e.target.value))} style={{ width: '100%', accentColor: AMBER }} />
             <span style={{ opacity: 0.55, fontSize: '0.68rem' }}>Raise this if the manor is too dark to read on your display.</span>
+          </label>
+          <label style={{ color: INK, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: 'pointer' }}>
+            <input type="checkbox" checked={crt} onChange={(e) => applyCrt(e.target.checked)} style={{ accentColor: AMBER }} />
+            <span>Film look <span style={{ opacity: 0.5, fontSize: '0.68rem' }}>(scanlines + frame weave)</span></span>
           </label>
           <button style={{ ...beginBtnStyle, marginTop: 14 }} onClick={() => setSettingsOpen(false)}>Close</button>
         </div>
@@ -305,76 +344,104 @@ function InventoryScreen({ s }: { s: GameStoreSnapshot }) {
   );
 }
 
-// ── Opening story cutscene ────────────────────────────────────────────
-// A sequence of narrative beats that plays the moment the game mounts. Every
-// model + the physics engine preload in the background while it runs, so by the
-// time the reader reaches the last card the estate is (usually) ready. The
-// final "Enter" is gated on `ready` — if assets are still coming in it shows the
-// live progress instead, so you can never drop into a half-loaded house.
-const STORY: { title?: string; text: string }[] = [
-  { title: 'HOLLOWMERE', text: 'A great house on the tidal flats, cut from the mainland whenever the sea comes in. A letter was sent here, once. It was never answered.' },
-  { text: 'You are the relief courier. Behind you the causeway is already drowning; there is no road back now — only forward, and up, into the unlit house.' },
-  { text: 'Hollowmere does not keep its dead. Strike one down and it will ripen and rise again. Only fire keeps them still — your flares are mercy. Spend them well.' },
-  { text: 'Your flashlight is the only sight these halls will give you. But light carries, and something older lives here. It comes faster when it sees you burn.' },
-  { text: 'Find the four crests. Wake the lighthouse. Learn what the Vane family gave to the water — and why, all these years, the water has never given it back.' },
-  { text: 'Ration the flame. Bind your wounds. The tide is rising.' },
-];
+// ── Loading screen ────────────────────────────────────────────────────
+// Shown before anything else: holds until every model + the physics engine is
+// loaded (store.ready). Also warms the intro video's buffer via a hidden
+// preloading <video>, so the cutscene starts instantly once we let go.
+function LoadingScreen({ progress }: { progress: number }) {
+  const pct = Math.round(progress * 100);
+  return (
+    <div style={loadingScreenStyle}>
+      <h1 style={{ letterSpacing: 8, color: INK, margin: 0 }}>HOLLOWMERE</h1>
+      <p style={{ color: AMBER, letterSpacing: 3, marginTop: 14, fontSize: '0.8rem' }}>THE HOUSE IS WAKING…</p>
+      <div style={{ width: 280, height: 6, marginTop: 16, background: 'rgba(233,220,195,0.15)', borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: AMBER, borderRadius: 3, transition: 'width 160ms linear' }} />
+      </div>
+      <p style={{ color: INK, opacity: 0.55, marginTop: 10, fontSize: '0.72rem' }}>{pct}%</p>
+      <p style={{ color: INK, opacity: 0.35, marginTop: 18, fontSize: '0.68rem', maxWidth: 380, textAlign: 'center', lineHeight: 1.6 }}>
+        Every room, every resident, every light is being placed. Nothing enters the house after you do.
+      </p>
+      {introVideo ? <video src={introVideo} preload="auto" muted playsInline style={{ display: 'none' }} /> : null}
+      {ASSETS['intro_movie'] ? <video src={ASSETS['intro_movie']} preload="auto" muted playsInline style={{ display: 'none' }} /> : null}
+    </div>
+  );
+}
+
+// ── Cinematic intro ───────────────────────────────────────────────────
+// A real film: four Veo shots with the narration MIXED INTO the video track,
+// played full-screen WITH SOUND. The explicit ▸ Begin click is the browser's
+// autoplay gesture, so unmuted playback is legal. Skippable at any moment;
+// respawns (hm_skipIntro) jump straight past it to the start card.
+type IntroStage = 'gate' | 'film' | 'done';
 
 function IntroCutscene({ ready, loadProgress }: { ready: boolean; loadProgress: number }) {
-  // On respawn we jump straight to the final "Enter" card — no story replay.
-  const [i, setI] = useState(() => {
-    try { return sessionStorage.getItem('hm_skipIntro') ? STORY.length - 1 : 0; } catch { return 0; }
+  const [stage, setStage] = useState<IntroStage>(() => {
+    try { return sessionStorage.getItem('hm_skipIntro') ? 'done' : 'gate'; } catch { return 'gate'; }
   });
   useEffect(() => { try { sessionStorage.removeItem('hm_skipIntro'); } catch { /* ignore */ } }, []);
-  const last = i >= STORY.length - 1;
-  useEffect(() => {
-    if (last) return;
-    const t = setTimeout(() => setI((n) => Math.min(STORY.length - 1, n + 1)), 6200);
-    return () => clearTimeout(t);
-  }, [i, last]);
-  const advance = () => setI((n) => Math.min(STORY.length - 1, n + 1));
-  const slide = STORY[i];
-  const pct = Math.round(loadProgress * 100);
-  return (
-    <div style={cutsceneStyle} onClick={!last ? advance : undefined}>
-      {i === 0 && titleImg ? <img src={titleImg} alt="HOLLOWMERE" style={{ ...titleArtStyle, marginBottom: 8 }} /> : null}
-      {slide.title && !(i === 0 && titleImg) ? <h1 style={{ letterSpacing: 8, color: INK, margin: 0 }}>{slide.title}</h1> : null}
-      <p key={i} style={cutsceneTextStyle}>{slide.text}</p>
+  const movie = ASSETS['intro_movie'];
+  void ready;
+  void loadProgress;
 
-      {/* progress dots */}
-      <div style={{ display: 'flex', gap: 7, marginTop: 20 }}>
-        {STORY.map((_, k) => (
-          <span key={k} style={{ width: 7, height: 7, borderRadius: '50%', background: k === i ? AMBER : 'rgba(233,220,195,0.28)' }} />
-        ))}
+  if (stage === 'film' && movie) {
+    return (
+      <div style={{ position: 'absolute', inset: 0, background: '#000', pointerEvents: 'auto' }}>
+        <video
+          src={movie}
+          autoPlay
+          playsInline
+          onEnded={() => setStage('done')}
+          onError={() => setStage('done')}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+        <button style={skipFilmBtnStyle} onClick={() => setStage('done')}>Skip ⏭</button>
       </div>
+    );
+  }
 
-      {!last ? (
-        <>
-          <button style={beginBtnStyle} onClick={(e) => { e.stopPropagation(); advance(); }}>Continue ▸</button>
-          <button
-            style={{ marginTop: 12, background: 'none', border: 'none', color: INK, opacity: 0.4, fontFamily: fontStack, fontSize: '0.72rem', letterSpacing: 1, cursor: 'pointer', pointerEvents: 'auto' }}
-            onClick={(e) => { e.stopPropagation(); setI(STORY.length - 1); }}
-          >
-            skip ⏭
-          </button>
-        </>
-      ) : ready ? (
-        <>
-          <button style={{ ...beginBtnStyle, marginTop: 20 }} onClick={triggerStart}>▸ Enter Hollowmere</button>
-          <p style={{ color: INK, opacity: 0.55, fontSize: '0.72rem', marginTop: 16, textAlign: 'center', lineHeight: 1.6 }}>
-            <b style={{ color: AMBER }}>WASD</b> move · <b style={{ color: AMBER }}>Mouse</b> look · <b style={{ color: AMBER }}>Shift</b> sprint · <b style={{ color: AMBER }}>L</b> flashlight · <b style={{ color: AMBER }}>B</b> bind wound<br />
-            <b style={{ color: AMBER }}>Left-click</b> attack · <b style={{ color: AMBER }}>E</b> use · <b style={{ color: AMBER }}>1–9</b> select · <b style={{ color: AMBER }}>I</b>/<b style={{ color: AMBER }}>Tab</b> inventory · <b style={{ color: AMBER }}>Esc</b> release
-          </p>
-        </>
-      ) : (
-        <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-          <p style={{ color: AMBER, letterSpacing: 3, fontSize: '0.78rem', margin: 0 }}>THE HOUSE IS STILL WAKING…</p>
-          <div style={{ width: 260, height: 6, background: 'rgba(233,220,195,0.15)', borderRadius: 3, overflow: 'hidden' }}>
-            <div style={{ width: `${pct}%`, height: '100%', background: AMBER, borderRadius: 3, transition: 'width 160ms linear' }} />
-          </div>
-          <p style={{ color: INK, opacity: 0.5, fontSize: '0.72rem', margin: 0 }}>{pct}%</p>
-        </div>
-      )}
+  return (
+    <div style={cutsceneStyle}>
+      {introVideo ? (
+        <video
+          src={introVideo}
+          autoPlay
+          muted
+          loop
+          playsInline
+          style={cutsceneVideoStyle}
+          ref={(v) => {
+            if (!v) return;
+            void v.play().catch(() => {
+              const kick = () => {
+                void v.play().catch(() => undefined);
+                window.removeEventListener('pointerdown', kick);
+              };
+              window.addEventListener('pointerdown', kick);
+            });
+          }}
+        />
+      ) : null}
+      <div style={cutsceneShadeStyle} />
+      <div style={cutsceneContentStyle}>
+        {titleImg ? <img src={titleImg} alt="HOLLOWMERE" style={{ ...titleArtStyle, marginBottom: 8 }} /> : <h1 style={{ letterSpacing: 8, color: INK, margin: 0 }}>HOLLOWMERE</h1>}
+        {stage === 'gate' && movie ? (
+          <>
+            <p style={{ color: INK, opacity: 0.72, maxWidth: 460, textAlign: 'center', fontSize: '0.92rem', lineHeight: 1.65, marginTop: 14 }}>
+              A letter was sent to Hollowmere, once. It was never answered.
+            </p>
+            <button style={{ ...beginBtnStyle, marginTop: 20 }} onClick={() => setStage('film')}>▸ Begin</button>
+            <button style={skipLinkStyle} onClick={() => setStage('done')}>skip the film ⏭</button>
+          </>
+        ) : (
+          <>
+            <button style={{ ...beginBtnStyle, marginTop: 20 }} onClick={triggerStart}>▸ Enter Hollowmere</button>
+            <p style={{ color: INK, opacity: 0.55, fontSize: '0.72rem', marginTop: 16, textAlign: 'center', lineHeight: 1.6 }}>
+              <b style={{ color: AMBER }}>WASD</b> move · <b style={{ color: AMBER }}>Mouse</b> look · <b style={{ color: AMBER }}>Shift</b> sprint · <b style={{ color: AMBER }}>Space</b> dodge · <b style={{ color: AMBER }}>C</b> sneak · <b style={{ color: AMBER }}>L</b> flashlight · <b style={{ color: AMBER }}>B</b> bind<br />
+              <b style={{ color: AMBER }}>Left-click</b> attack · <b style={{ color: AMBER }}>E</b> use · <b style={{ color: AMBER }}>1–9</b> select · <b style={{ color: AMBER }}>I</b>/<b style={{ color: AMBER }}>Tab</b> inventory · <b style={{ color: AMBER }}>Esc</b> release
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -411,6 +478,11 @@ const curtainStyle: CSSProperties = { position: 'absolute', inset: 0, background
 const titleScreenStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'radial-gradient(circle at 50% 40%, rgba(20,16,12,0.6), rgba(2,2,3,0.92))', fontFamily: fontStack, pointerEvents: 'auto', cursor: 'pointer', padding: 24 };
 const titleArtStyle: CSSProperties = { maxWidth: 'min(80vw, 460px)', imageRendering: 'pixelated', filter: 'drop-shadow(0 4px 16px #000)' };
 const cutsceneStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, background: 'radial-gradient(circle at 50% 38%, rgba(18,14,10,0.72), rgba(2,2,3,0.97))', fontFamily: fontStack, pointerEvents: 'auto', cursor: 'pointer', padding: '24px 32px', textAlign: 'center', userSelect: 'none' };
-const cutsceneTextStyle: CSSProperties = { color: INK, opacity: 0.88, maxWidth: 520, fontSize: '1.02rem', lineHeight: 1.75, marginTop: 18, minHeight: 96, textShadow: '0 1px 3px #000' };
+const skipFilmBtnStyle: CSSProperties = { position: 'absolute', bottom: 22, right: 26, padding: '8px 18px', background: 'rgba(8,7,6,0.6)', color: '#e9dcc3', border: '1px solid rgba(233,220,195,0.35)', borderRadius: 5, fontFamily: fontStack, fontSize: '0.82rem', letterSpacing: 1, cursor: 'pointer', pointerEvents: 'auto' };
+const skipLinkStyle: CSSProperties = { marginTop: 12, background: 'none', border: 'none', color: INK, opacity: 0.45, fontFamily: fontStack, fontSize: '0.72rem', letterSpacing: 1, cursor: 'pointer', pointerEvents: 'auto' };
+const loadingScreenStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#020203', fontFamily: fontStack, pointerEvents: 'auto', userSelect: 'none' };
+const cutsceneVideoStyle: CSSProperties = { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 };
+const cutsceneShadeStyle: CSSProperties = { position: 'absolute', inset: 0, zIndex: 1, background: 'radial-gradient(circle at 50% 42%, rgba(4,3,3,0.35), rgba(2,2,3,0.88))' };
+const cutsceneContentStyle: CSSProperties = { position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' };
 const beginBtnStyle: CSSProperties = { marginTop: 16, padding: '10px 26px', background: 'transparent', color: AMBER, border: `1px solid ${AMBER}`, borderRadius: 4, fontFamily: fontStack, fontSize: '1rem', letterSpacing: 2, cursor: 'pointer', pointerEvents: 'auto' };
 const endStyle: CSSProperties = { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, background: 'rgba(2,2,3,0.9)', fontFamily: fontStack, pointerEvents: 'auto', padding: 24, textAlign: 'center' };
