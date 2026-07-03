@@ -15,6 +15,7 @@ import type { SceneEntities } from './entities';
 import type { ItemField } from './items';
 import type { GameAudioHandle } from './audio';
 import type { WeaponView } from './viewmodel';
+import { ASSETS } from '../assets';
 
 export interface DirectorDeps {
   world: GameWorldObjects;
@@ -669,6 +670,28 @@ export function createDirector(deps: DirectorDeps): Director {
     }
   };
 
+  // ── VO playback (cached HTMLAudio per key — no hot-path allocation) ──
+  const voCache = new Map<string, HTMLAudioElement>();
+  let voCurrent: HTMLAudioElement | null = null;
+  const playVo = (key: string) => {
+    const url = ASSETS[key];
+    if (!url) return; // clip not generated — text-only, degrade silently
+    if (voCurrent) {
+      voCurrent.pause();
+      voCurrent.currentTime = 0;
+    }
+    let el = voCache.get(key);
+    if (!el) {
+      el = new Audio(url);
+      el.volume = 0.95;
+      voCache.set(key, el);
+    }
+    voCurrent = el;
+    void el.play().catch(() => undefined);
+  };
+  // heartbeat: a looping dread-pulse that swells as hp falls
+  let heartEl: HTMLAudioElement | null = null;
+
   const talkTo = (it: { id: string; label: string; lines?: string[] }) => {
     const lines = it.lines ?? [];
     if (lines.length === 0) {
@@ -677,6 +700,7 @@ export function createDirector(deps: DirectorDeps): Director {
     }
     const i = npcLine[it.id] ?? 0;
     toast(lines[i]);
+    playVo(`vo_${it.id}_${i}`);
     npcLine[it.id] = (i + 1) % lines.length;
     audio.play('ui');
   };
@@ -1078,6 +1102,7 @@ export function createDirector(deps: DirectorDeps): Director {
     phase = 'DEAD';
     objective = 'The house keeps you now.';
     toast('You are arranged among the others.');
+    if (heartEl && !heartEl.paused) heartEl.pause();
   };
 
   // Rise at the last threshold: restore the state snapshotted when you last
@@ -1582,6 +1607,20 @@ export function createDirector(deps: DirectorDeps): Director {
 
     // health / death
     world.setHealthFactor(hp / TUNING.playerMaxHp);
+    // heartbeat swells under 32 hp — dread you can hear
+    const wantHeart = hp > 0 && hp < 32;
+    if (wantHeart) {
+      if (!heartEl && ASSETS['sfx_heartbeat']) {
+        heartEl = new Audio(ASSETS['sfx_heartbeat']);
+        heartEl.loop = true;
+      }
+      if (heartEl) {
+        heartEl.volume = Math.min(0.85, 0.3 + (1 - hp / 32) * 0.6);
+        if (heartEl.paused) void heartEl.play().catch(() => undefined);
+      }
+    } else if (heartEl && !heartEl.paused) {
+      heartEl.pause();
+    }
     if (hp <= 0) {
       die();
       pushStore();

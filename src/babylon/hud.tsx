@@ -379,9 +379,30 @@ function IntroCutscene({ ready, loadProgress }: { ready: boolean; loadProgress: 
   const last = i >= STORY.length - 1;
   useEffect(() => {
     if (last) return;
-    const t = setTimeout(() => setI((n) => Math.min(STORY.length - 1, n + 1)), 6200);
+    const t = setTimeout(() => setI((n) => Math.min(STORY.length - 1, n + 1)), 9000); // let the narration breathe
     return () => clearTimeout(t);
   }, [i, last]);
+  // narration: one spoken clip per story beat (muted-autoplay rules mean the
+  // first beat may wait for the first click; each advance cuts to its own line)
+  useEffect(() => {
+    const url = ASSETS[`vo_intro_${i}`];
+    if (!url) return;
+    const el = new Audio(url);
+    el.volume = 0.95;
+    let kicked = false;
+    const kick = () => {
+      kicked = true;
+      void el.play().catch(() => undefined);
+      window.removeEventListener('pointerdown', kick);
+    };
+    void el.play().catch(() => {
+      window.addEventListener('pointerdown', kick);
+    });
+    return () => {
+      el.pause();
+      if (!kicked) window.removeEventListener('pointerdown', kick);
+    };
+  }, [i]);
   const advance = () => setI((n) => Math.min(STORY.length - 1, n + 1));
   const slide = STORY[i];
   const pct = Math.round(loadProgress * 100);
